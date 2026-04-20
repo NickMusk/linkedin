@@ -1,0 +1,29 @@
+services:
+  - type: worker
+    name: linkedin-commenter
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python autonomous.py
+    disk:
+      name: data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: APIFY_API_TOKEN
+        sync: false
+      - key: UNIPILE_API_KEY
+        sync: false
+      - key: UNIPILE_DSN
+        sync: false
+      - key: UNIPILE_ACCOUNT_ID
+        sync: false
+      - key: TWITTER_AUTH_TOKEN
+        sync: false
+      - key: TWITTER_CT0
+        sync: false
+      - key: LINKEDIN_LI_AT
+        sync: false
+      - key: DATA_DIR
+        value: /data

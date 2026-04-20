@@ -1,0 +1,12 @@
+.env
+.DS_Store
+__pycache__/
+*.pyc
+reports/
+seen_urls.json
+seen_tweets.json
+engagement_db.json
+comment_examples.md
+tweet_examples.md
+autonomous_state.json
+nohup.out
