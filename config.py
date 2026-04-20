@@ -5,6 +5,7 @@ load_dotenv()
 
 # On Render, persistent disk is mounted at /data. Locally, use project dir.
 DATA_DIR = os.getenv("DATA_DIR", os.path.dirname(__file__))
+os.makedirs(DATA_DIR, exist_ok=True)
 
 ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
 APIFY_API_TOKEN = os.environ["APIFY_API_TOKEN"]  # still used by fetch_tweets.py
