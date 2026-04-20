@@ -1,9 +1,9 @@
 services:
-  - type: worker
+  - type: web
     name: linkedin-commenter
     runtime: python
     buildCommand: pip install -r requirements.txt
-    startCommand: python autonomous.py
+    startCommand: python app.py
     disk:
       name: data
       mountPath: /data
