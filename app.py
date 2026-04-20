@@ -9,7 +9,10 @@ import time
 import random
 import logging
 from datetime import datetime, timezone, timedelta
+from zoneinfo import ZoneInfo
 from flask import Flask, request, redirect, render_template_string
+
+SF_TZ = ZoneInfo("America/Los_Angeles")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(message)s",
                     datefmt="%Y-%m-%d %H:%M:%S")
@@ -109,12 +112,12 @@ def log_tw_reply(author, tweet_url, tweet_text, reply_text):
     save_json(TW_LOG, entries[-500:])
 
 
-def dubai_now():
-    return datetime.now(timezone.utc) + timedelta(hours=4)
+def local_now():
+    return datetime.now(SF_TZ)
 
 
 def today_str():
-    return dubai_now().strftime("%Y-%m-%d")
+    return local_now().strftime("%Y-%m-%d")
 
 
 def fmt_time(iso):
@@ -122,8 +125,8 @@ def fmt_time(iso):
         return "—"
     try:
         dt = datetime.fromisoformat(iso)
-        dubai = dt + timedelta(hours=4) if dt.tzinfo else dt
-        return dubai.strftime("%d %b %H:%M")
+        local = dt.astimezone(SF_TZ) if dt.tzinfo else dt
+        return local.strftime("%d %b %H:%M")
     except Exception:
         return iso
 
@@ -145,7 +148,7 @@ TEMPLATE = """
 
   <div class="flex items-center justify-between mb-8">
     <h1 class="text-2xl font-bold">Commenter Dashboard</h1>
-    <span class="text-xs text-gray-500">auto-refreshes every 60s · Dubai time</span>
+    <span class="text-xs text-gray-500">auto-refreshes every 60s · SF time</span>
   </div>
 
   <!-- ── LinkedIn ── -->
@@ -191,7 +194,7 @@ TEMPLATE = """
           class="bg-gray-800 rounded-lg px-3 py-2 text-white border border-gray-700 focus:border-blue-500 outline-none">
       </label>
       <label class="flex flex-col gap-1">
-        <span class="text-xs text-gray-500">Active hours (Dubai)</span>
+        <span class="text-xs text-gray-500">Active hours (SF)</span>
         <div class="flex gap-2 items-center">
           <input type="number" name="active_start" value="{{ settings.active_start }}" min="0" max="23"
             class="bg-gray-800 rounded-lg px-3 py-2 text-white border border-gray-700 focus:border-blue-500 outline-none w-20">
@@ -398,17 +401,17 @@ def update_status(**kwargs):
 
 
 def within_active_hours(s):
-    h = dubai_now().hour
+    h = local_now().hour
     return s["active_start"] <= h < s["active_end"]
 
 
 def seconds_until_active(s):
-    now = dubai_now()
+    now = local_now()
     if now.hour < s["active_start"]:
-        target = now.replace(hour=s["active_start"], minute=random.randint(0, 20), second=0)
+        target = now.replace(hour=s["active_start"], minute=random.randint(0, 20), second=0, microsecond=0)
     else:
         target = (now + timedelta(days=1)).replace(
-            hour=s["active_start"], minute=random.randint(0, 20), second=0)
+            hour=s["active_start"], minute=random.randint(0, 20), second=0, microsecond=0)
     return max(60, int((target - now).total_seconds()))
 
 
@@ -506,9 +509,9 @@ def linkedin_loop():
             if not within_active_hours(s):
                 secs = seconds_until_active(s)
                 wake = datetime.now(timezone.utc) + timedelta(seconds=secs)
-                wake_dubai = wake + timedelta(hours=4)
+                wake_sf = wake.astimezone(SF_TZ)
                 update_status(state="sleeping (off hours)", next_session=wake.isoformat())
-                log.info(f"LinkedIn: off hours. Sleeping {secs//60}m until {wake_dubai.strftime('%H:%M')} Dubai.")
+                log.info(f"LinkedIn: off hours. Sleeping {secs//60}m until {wake_sf.strftime('%H:%M')} SF.")
                 time.sleep(secs)
                 continue
 
@@ -531,9 +534,9 @@ def linkedin_loop():
             s = get_settings()
             gap = random.randint(s["gap_min"], s["gap_max"])
             wake = datetime.now(timezone.utc) + timedelta(minutes=gap)
-            wake_dubai = wake + timedelta(hours=4)
+            wake_sf = wake.astimezone(SF_TZ)
             update_status(next_session=wake.isoformat())
-            log.info(f"LinkedIn: next session in {gap}m (~{wake_dubai.strftime('%H:%M')} Dubai).")
+            log.info(f"LinkedIn: next session in {gap}m (~{wake_sf.strftime('%H:%M')} SF).")
             last_session_ts = time.time()
             time.sleep(gap * 60)
 
@@ -609,9 +612,8 @@ def twitter_loop():
             s2 = get_settings()
             gap = random.randint(s2["tw_gap_min"], s2["tw_gap_max"])
             wake = datetime.now(timezone.utc) + timedelta(minutes=gap)
-            wake_dubai = wake + timedelta(hours=4)
             update_tw_status(today_count=new_count, state="sleeping", next_session=wake.isoformat())
-            log.info(f"Twitter: next session in {gap}m (~{wake_dubai.strftime('%H:%M')} Dubai).")
+            log.info(f"Twitter: next session in {gap}m (~{wake.astimezone(SF_TZ).strftime('%H:%M')} SF).")
             last_session_ts = time.time()
             time.sleep(gap * 60)
 
