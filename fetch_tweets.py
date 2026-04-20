@@ -9,14 +9,14 @@ MAX_TWEET_AGE_DAYS = 2
 SEEN_TWEETS_FILE = os.path.join(os.path.dirname(__file__), "seen_tweets.json")
 
 TWITTER_KEYWORDS = [
-    "AI startup founder",
-    "founder advice",
-    "venture capital 2025",
-    "product market fit",
-    "hiring startup",
-    "future of work AI",
-    "agentic AI",
-    "startup lessons",
+    "venture capital founder",
+    "VC startup advice",
+    "product market fit startup",
+    "fundraising pre-seed seed",
+    "AI startup building",
+    "founder lessons learned",
+    "startup growth B2B SaaS",
+    "angel investor startup",
 ]
 
 TWEETS_PER_KEYWORD = 25

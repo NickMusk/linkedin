@@ -4,6 +4,7 @@ import random
 import requests
 from config import UNIPILE_API_KEY, UNIPILE_DSN, UNIPILE_ACCOUNT_ID, PUBLISH_DELAY_MIN, PUBLISH_DELAY_MAX
 from knowledge_base import save_example
+from fetch_posts import mark_url_published
 
 
 def _headers() -> dict:
@@ -79,6 +80,7 @@ def publish_comments(approved: list[dict], comments_path: str = None) -> list[di
         if ok:
             print(f"    Posted (comment_id: {detail})")
             save_example(item.get("text", item.get("url", "")), comment_text)
+            mark_url_published(item["url"])
             if comments_path:
                 _mark_published(comments_path, item["url"])
         else:

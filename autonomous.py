@@ -125,6 +125,7 @@ def run_session():
     from generate_comments import generate_comments
     from publish import _extract_activity_id, _get_social_id, _post_comment, _mark_published
     from knowledge_base import save_example
+    from fetch_posts import mark_url_published
     from config import PUBLISH_DELAY_MIN, PUBLISH_DELAY_MAX
     import json as _json
 
@@ -188,6 +189,7 @@ def run_session():
             log.info(f"    Posted ✓ ({detail})")
             save_example(item.get("text", url), text)
             _mark_published(comments_path, url)
+            mark_url_published(url)
             published += 1
         else:
             log.warning(f"    Failed: {detail}")

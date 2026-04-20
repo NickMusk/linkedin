@@ -7,6 +7,7 @@ from config import UNIPILE_API_KEY, UNIPILE_DSN, UNIPILE_ACCOUNT_ID, MIN_LIKES, 
 MAX_POST_AGE_DAYS = 7
 SEEN_URL_TTL_DAYS = 3
 SEEN_URLS_FILE = os.path.join(DATA_DIR, "seen_urls.json")
+PUBLISHED_URLS_FILE = os.path.join(DATA_DIR, "published_urls.json")
 
 FEED_URL = "https://www.linkedin.com/voyager/api/graphql?queryId=voyagerFeedDashMainFeed.7a50ef8ba5a7865c23ad5df46f735709"
 FEED_BATCH = 10  # LinkedIn returns 10 per page max
@@ -22,6 +23,20 @@ def _load_seen_urls() -> set:
         return set(data)
     return {url for url, ts in data.items()
             if datetime.fromisoformat(ts) >= cutoff}
+
+
+def _load_published_urls() -> set:
+    if not os.path.exists(PUBLISHED_URLS_FILE):
+        return set()
+    with open(PUBLISHED_URLS_FILE) as f:
+        return set(json.load(f))
+
+
+def mark_url_published(url: str):
+    published = _load_published_urls()
+    published.add(url)
+    with open(PUBLISHED_URLS_FILE, "w") as f:
+        json.dump(list(published), f)
 
 
 def _save_seen_urls(seen: set):
@@ -103,6 +118,7 @@ def _normalize(el: dict):
 
 def fetch_feed_posts(target: int = 30) -> list[dict]:
     seen_urls = _load_seen_urls()
+    published_urls = _load_published_urls()
     posts = []
     pagination_token = None
     pages_fetched = 0
@@ -123,7 +139,7 @@ def fetch_feed_posts(target: int = 30) -> list[dict]:
             if not post:
                 continue
             url = post["url"]
-            if url in seen_urls:
+            if url in seen_urls or url in published_urls:
                 continue
             if post["likes"] < MIN_LIKES:
                 continue
