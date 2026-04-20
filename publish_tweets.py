@@ -1,10 +1,14 @@
 import re
 import time
 import random
+import logging
 import requests
 from pathlib import Path
+from datetime import datetime, timezone
 
 from config import TWITTER_AUTH_TOKEN, TWITTER_CT0
+
+log = logging.getLogger(__name__)
 
 BEARER_TOKEN = "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
 QUERY_ID = "c50A_puUoQGK_4SXseYz3A"
@@ -74,6 +78,92 @@ def _post_reply(tweet_id: str, text: str) -> tuple:
         return False, f"HTTP {resp.status_code}: {resp.text[:300]}"
     except Exception as e:
         return False, str(e)
+
+
+def run_twitter_session(settings: dict, log_fn=None, update_status_fn=None) -> int:
+    """
+    Full Twitter session: fetch → generate → auto-publish.
+    Returns number of replies posted.
+    """
+    from fetch_tweets import fetch_tweets
+    from generate_replies import generate_replies
+    from knowledge_base import build_context, save_tweet_example
+
+    if update_status_fn:
+        update_status_fn(state="fetching", last_session=datetime.now(timezone.utc).isoformat())
+
+    log.info("Twitter session: fetching tweets...")
+    tweets = fetch_tweets()
+    if not tweets:
+        log.info("Twitter: no new tweets.")
+        if update_status_fn:
+            update_status_fn(state="sleeping")
+        return 0
+
+    log.info(f"Twitter: {len(tweets)} tweets. Generating replies...")
+    if update_status_fn:
+        update_status_fn(state="generating")
+
+    kb = build_context()
+    items = generate_replies(tweets, kb)
+
+    budget = min(
+        settings.get("tw_max_per_session", 8),
+        settings.get("tw_max_per_day", 20) - settings.get("_tw_today_count", 0),
+    )
+
+    to_post = [
+        it for it in items
+        if not it.get("skip")
+        and len(it.get("draft", "")) >= 20
+        and not any(p in it.get("draft", "") for p in SKIP_PHRASES)
+    ][:budget]
+
+    if not to_post:
+        log.info("Twitter: nothing to publish.")
+        if update_status_fn:
+            update_status_fn(state="sleeping")
+        return 0
+
+    log.info(f"Twitter: publishing {len(to_post)} replies...")
+    if update_status_fn:
+        update_status_fn(state="posting")
+
+    delay_min = settings.get("tw_reply_delay_min", 180)
+    delay_max = settings.get("tw_reply_delay_max", 240)
+    posted = 0
+
+    for i, item in enumerate(to_post):
+        tweet_id = _extract_tweet_id(item["url"])
+        if not tweet_id:
+            continue
+
+        log.info(f"  Twitter [{i+1}/{len(to_post)}] @{item.get('author_username', item.get('author', '?'))[:30]}")
+        ok, detail = _post_reply(tweet_id, item["draft"])
+
+        if ok:
+            log.info(f"    OK: {detail}")
+            save_tweet_example(item.get("text", ""), item["draft"])
+            if log_fn:
+                log_fn(
+                    author=item.get("author", "?"),
+                    tweet_url=item["url"],
+                    tweet_text=item.get("text", ""),
+                    reply_text=item["draft"],
+                )
+            posted += 1
+        else:
+            log.warning(f"    Failed: {detail}")
+
+        if i < len(to_post) - 1:
+            delay = random.randint(delay_min, delay_max)
+            log.info(f"  Twitter: waiting {delay}s...")
+            time.sleep(delay)
+
+    log.info(f"Twitter session done: {posted}/{len(to_post)} posted.")
+    if update_status_fn:
+        update_status_fn(state="sleeping")
+    return posted
 
 
 def parse_replies_md(path: str) -> list:
