@@ -19,7 +19,7 @@ TWITTER_CT0 = os.environ["TWITTER_CT0"]
 # Minimum likes for a post to be included
 MIN_LIKES = 50
 
-# Publishing: random delay range between comments (seconds)
-PUBLISH_DELAY_MIN = 120
-PUBLISH_DELAY_MAX = 480
+# Publishing: random delay between individual comments (seconds)
+PUBLISH_DELAY_MIN = 60
+PUBLISH_DELAY_MAX = 600
 

@@ -26,21 +26,28 @@ COMMENTS_LOG       = os.path.join(DATA_DIR, "comments_log.json")
 TW_STATUS_FILE     = os.path.join(DATA_DIR, "twitter_status.json")
 TW_LOG             = os.path.join(DATA_DIR, "twitter_log.json")
 
+_PREV_DEFAULTS = {
+    "max_per_day": 18, "max_per_session": 6, "active_start": 8, "active_end": 21,
+    "gap_min": 150, "gap_max": 240,
+    "tw_max_per_day": 20, "tw_max_per_session": 8, "tw_gap_min": 240, "tw_gap_max": 480,
+    "tw_reply_delay_min": 180, "tw_reply_delay_max": 240,
+}
+
 DEFAULT_SETTINGS = {
-    # LinkedIn
-    "max_per_day":     18,
-    "max_per_session":  6,
-    "active_start":     8,
-    "active_end":      21,
-    "gap_min":        150,
-    "gap_max":        240,
-    # Twitter
-    "tw_max_per_day":       20,
-    "tw_max_per_session":    8,
-    "tw_gap_min":          240,
-    "tw_gap_max":          480,
-    "tw_reply_delay_min":  180,
-    "tw_reply_delay_max":  240,
+    # LinkedIn — 24/7, randomised gaps 45–120 min
+    "max_per_day":     50,
+    "max_per_session": 12,
+    "active_start":     0,
+    "active_end":      24,
+    "gap_min":         45,
+    "gap_max":        120,
+    # Twitter — 24/7, randomised gaps 45–120 min
+    "tw_max_per_day":       50,
+    "tw_max_per_session":   15,
+    "tw_gap_min":           45,
+    "tw_gap_max":          120,
+    "tw_reply_delay_min":  120,
+    "tw_reply_delay_max":  360,
 }
 
 app = Flask(__name__)
@@ -65,8 +72,17 @@ def save_json(path, data):
 
 def get_settings():
     s = load_json(SETTINGS_FILE, DEFAULT_SETTINGS)
-    for k, v in DEFAULT_SETTINGS.items():
-        s.setdefault(k, v)
+    changed = False
+    for k, new_v in DEFAULT_SETTINGS.items():
+        if k not in s:
+            s[k] = new_v
+            changed = True
+        elif s[k] == _PREV_DEFAULTS.get(k):
+            # Value was never customised — update to new default
+            s[k] = new_v
+            changed = True
+    if changed:
+        save_json(SETTINGS_FILE, s)
     return s
 
 
