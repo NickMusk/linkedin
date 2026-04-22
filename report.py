@@ -16,9 +16,12 @@ def save_posts(posts: list[dict], directory: str) -> str:
     path = os.path.join(directory, "posts.md")
     lines = [f"# Posts — {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"]
     for i, p in enumerate(posts, 1):
+        score = p.get("engagement_score", p["likes"] + 3 * p["comments"])
+        posted_at = p.get("posted_at", "")
+        age_note = f" · {posted_at[:16].replace('T', ' ')} UTC" if posted_at else ""
         lines.append(f"## {i}. {p['author']}")
         lines.append(f"**Role:** {p['author_title']}")
-        lines.append(f"**Engagement:** {p['likes']} likes · {p['comments']} comments")
+        lines.append(f"**Engagement:** {p['likes']} likes · {p['comments']} comments · score {score}{age_note}")
         lines.append(f"**Source:** {p['source']}")
         lines.append(f"**URL:** {p['url']}\n")
         lines.append(p['text'][:800] + ("..." if len(p['text']) > 800 else ""))

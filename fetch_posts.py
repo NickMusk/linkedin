@@ -4,7 +4,7 @@ import requests
 from datetime import datetime, timezone, timedelta
 from config import UNIPILE_API_KEY, UNIPILE_DSN, UNIPILE_ACCOUNT_ID, MIN_LIKES, DATA_DIR
 
-MAX_POST_AGE_DAYS = 7
+MAX_POST_AGE_HOURS = 4   # skip posts older than this
 SEEN_URL_TTL_DAYS = 3
 SEEN_URLS_FILE = os.path.join(DATA_DIR, "seen_urls.json")
 PUBLISHED_URLS_FILE = os.path.join(DATA_DIR, "published_urls.json")
@@ -99,6 +99,17 @@ def _normalize(el: dict):
     likes = counts.get("numLikes", 0) or 0
     comments = counts.get("numComments", 0) or 0
 
+    # Extract post timestamp (LinkedIn returns Unix ms in created.time)
+    created = el.get("created") or {}
+    created_ms = created.get("time") or el.get("createdAt") or 0
+    if created_ms:
+        posted_at = datetime.fromtimestamp(int(created_ms) / 1000, tz=timezone.utc).isoformat()
+    else:
+        posted_at = ""
+
+    # Engagement score: comments weighted 3x (they signal real interaction)
+    engagement_score = likes + 3 * comments
+
     # Clean share URL to a canonical post URL
     clean_url = url.split("?")[0]
 
@@ -110,7 +121,8 @@ def _normalize(el: dict):
         "text": text,
         "likes": likes,
         "comments": comments,
-        "posted_at": "",
+        "posted_at": posted_at,
+        "engagement_score": engagement_score,
         "hashtags": [],
         "source": "feed",
     }
@@ -143,6 +155,12 @@ def fetch_feed_posts(target: int = 30) -> list[dict]:
                 continue
             if post["likes"] < MIN_LIKES:
                 continue
+            # Skip posts older than MAX_POST_AGE_HOURS
+            if post["posted_at"]:
+                post_time = datetime.fromisoformat(post["posted_at"])
+                age_hours = (datetime.now(timezone.utc) - post_time).total_seconds() / 3600
+                if age_hours > MAX_POST_AGE_HOURS:
+                    continue
             seen_urls.add(url)
             posts.append(post)
             new_this_page += 1
@@ -153,6 +171,8 @@ def fetch_feed_posts(target: int = 30) -> list[dict]:
             break
 
     _save_seen_urls(seen_urls)
+    # Sort by engagement score descending so best posts get commented on first
+    posts.sort(key=lambda p: p.get("engagement_score", 0), reverse=True)
     return posts[:target]
 
 

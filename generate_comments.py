@@ -43,6 +43,8 @@ HARD rules:
 - NEVER comment on job postings. If the post is primarily a hiring announcement or job description, output exactly: SKIP
 - If the post is NOT written in English (e.g. Russian, Ukrainian, Hebrew, Spanish, etc.), output exactly: SKIP
 - NEVER open by quoting the author's phrase back at them in quotation marks. No "The 'X framing' is real but...", no "The 'Y model' works until...", no "The 'Z line' is right but...". State your counter or observation directly without echoing their words.
+- NEVER comment on posts where the author is primarily promoting their own product, service, or company (product launches, feature announcements, "we just shipped X", "check out what we built"). These are advertisements, not opinions. Output exactly: SKIP
+- NEVER comment on personal career milestone posts from people Nick doesn't know personally (e.g. "excited to share I've joined X", "thrilled to announce my promotion to Y", "I've been promoted to Z"). Output exactly: SKIP
 """
 
 
@@ -68,9 +70,12 @@ def generate_comments(posts: list[dict], kb_context: str) -> list[dict]:
 
 
 def _generate_one(post: dict, cached_kb: list) -> tuple[str, str]:
+    score = post.get("engagement_score", post["likes"] + 3 * post["comments"])
+    posted_at = post.get("posted_at", "")
+    age_note = f" | Posted: {posted_at[:16].replace('T', ' ')} UTC" if posted_at else ""
     post_block = (
         f"Author: {post['author']} — {post['author_title']}\n"
-        f"Likes: {post['likes']} | Comments: {post['comments']}\n"
+        f"Likes: {post['likes']} | Comments: {post['comments']} | Engagement score: {score}{age_note}\n"
         f"URL: {post['url']}\n\n"
         f"{post['text']}"
     )
