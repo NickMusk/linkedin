@@ -4,8 +4,8 @@ Autonomous LinkedIn comment poster.
 Runs as a Render Background Worker.
 
 Schedule logic:
-- Active hours: 08:00–21:00 Dubai time (UTC+4)
-- 4-5 sessions per day, randomised intervals (~2.5-4 hours apart)
+- Active hours: 09:00–18:00 San Francisco time (America/Los_Angeles, DST-aware)
+- 3-4 sessions per day, randomised intervals (~2.5-4 hours apart)
 - Per session: fetch posts → generate comments → auto-publish
 - Daily cap: MAX_COMMENTS_PER_DAY total comments posted
 - Per session cap: MAX_PER_SESSION comments (to avoid bursts)
@@ -17,6 +17,7 @@ import time
 import random
 import logging
 from datetime import datetime, timezone, timedelta
+from zoneinfo import ZoneInfo
 
 logging.basicConfig(
     level=logging.INFO,
@@ -27,23 +28,23 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 # ── Config ─────────────────────────────────────────────────────────────────
-DUBAI_OFFSET_H = 4          # UTC+4
-ACTIVE_START_H = 8          # 08:00 Dubai
-ACTIVE_END_H   = 21         # 21:00 Dubai
+SF_TZ          = ZoneInfo("America/Los_Angeles")
+ACTIVE_START_H = 9           # 09:00 SF
+ACTIVE_END_H   = 18          # 18:00 SF
 
-MAX_COMMENTS_PER_DAY = 18
-MAX_PER_SESSION      = 6    # comments per single run (natural burst size)
+MAX_COMMENTS_PER_DAY = 10
+MAX_PER_SESSION      = 3     # comments per single run (natural burst size)
 
-SESSION_GAP_MIN = 150       # min minutes between sessions
-SESSION_GAP_MAX = 240       # max minutes between sessions
+SESSION_GAP_MIN = 150        # min minutes between sessions
+SESSION_GAP_MAX = 270        # max minutes between sessions
 
 from config import DATA_DIR
 STATE_FILE = os.path.join(DATA_DIR, "autonomous_state.json")
 # ───────────────────────────────────────────────────────────────────────────
 
 
-def _dubai_now() -> datetime:
-    return datetime.now(timezone.utc) + timedelta(hours=DUBAI_OFFSET_H)
+def _sf_now() -> datetime:
+    return datetime.now(SF_TZ)
 
 
 def _load_state() -> dict:
@@ -62,7 +63,7 @@ def _save_state(state: dict):
 
 
 def _today_str() -> str:
-    return _dubai_now().strftime("%Y-%m-%d")
+    return _sf_now().strftime("%Y-%m-%d")
 
 
 def _comments_today(state: dict) -> int:
@@ -82,7 +83,7 @@ def _record_comments(n: int):
 
 
 def _within_active_hours() -> bool:
-    h = _dubai_now().hour
+    h = _sf_now().hour
     return ACTIVE_START_H <= h < ACTIVE_END_H
 
 
@@ -95,11 +96,11 @@ def _minutes_since_last_session() -> float:
 
 
 def _seconds_until_active() -> int:
-    now = _dubai_now()
+    now = _sf_now()
     if now.hour < ACTIVE_START_H:
-        target = now.replace(hour=ACTIVE_START_H, minute=random.randint(0, 30), second=0)
+        target = now.replace(hour=ACTIVE_START_H, minute=random.randint(0, 30), second=0, microsecond=0)
     else:
-        target = (now + timedelta(days=1)).replace(hour=ACTIVE_START_H, minute=random.randint(0, 30), second=0)
+        target = (now + timedelta(days=1)).replace(hour=ACTIVE_START_H, minute=random.randint(0, 30), second=0, microsecond=0)
     return max(0, int((target - now).total_seconds()))
 
 
@@ -250,22 +251,21 @@ def _save_auto_comments(items, publishable, directory):
 
 def main():
     log.info("Autonomous LinkedIn commenter started.")
-    log.info(f"Active hours: {ACTIVE_START_H}:00–{ACTIVE_END_H}:00 Dubai (UTC+4)")
+    log.info(f"Active hours: {ACTIVE_START_H}:00–{ACTIVE_END_H}:00 San Francisco (America/Los_Angeles)")
     log.info(f"Daily cap: {MAX_COMMENTS_PER_DAY} | Per session: {MAX_PER_SESSION}")
 
     while True:
-        now_dubai = _dubai_now()
+        now_sf = _sf_now()
 
         if not _within_active_hours():
             secs = _seconds_until_active()
-            wake = now_dubai + timedelta(seconds=secs)
-            log.info(f"Outside active hours ({now_dubai.strftime('%H:%M')} Dubai). "
-                     f"Sleeping until ~{wake.strftime('%H:%M')} Dubai ({secs//60}m).")
+            wake = now_sf + timedelta(seconds=secs)
+            log.info(f"Outside active hours ({now_sf.strftime('%H:%M')} SF). "
+                     f"Sleeping until ~{wake.strftime('%H:%M')} SF ({secs//60}m).")
             time.sleep(secs + random.randint(0, 600))
             continue
 
         since_last = _minutes_since_last_session()
-        gap = random.randint(SESSION_GAP_MIN, SESSION_GAP_MAX)
 
         if since_last < SESSION_GAP_MIN:
             wait_min = SESSION_GAP_MIN - int(since_last)
@@ -281,8 +281,8 @@ def main():
 
         # Sleep until next session
         next_gap = random.randint(SESSION_GAP_MIN, SESSION_GAP_MAX)
-        next_time = _dubai_now() + timedelta(minutes=next_gap)
-        log.info(f"Next session in ~{next_gap}m (~{next_time.strftime('%H:%M')} Dubai).")
+        next_time = _sf_now() + timedelta(minutes=next_gap)
+        log.info(f"Next session in ~{next_gap}m (~{next_time.strftime('%H:%M')} SF).")
         time.sleep(next_gap * 60)
 
 
