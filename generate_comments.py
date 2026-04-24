@@ -105,7 +105,8 @@ def _generate_one(post: dict, cached_kb: list) -> tuple[str, str]:
             ],
         )
     except Exception as e:
-        return f"[Error generating comment: {e}]", ""
+        print(f"  [API error] {e}")
+        return "SKIP", f"API error: {e}"
 
     raw = response.content[0].text
     if "REASONING:" in raw:

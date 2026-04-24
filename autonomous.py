@@ -154,6 +154,7 @@ def run_session():
         if not it.get("skip")
         and it.get("draft", "").strip()
         and len(it.get("draft", "")) >= 40
+        and not it.get("draft", "").startswith("[")  # guard against error strings
     ][:budget]
 
     if not publishable:
