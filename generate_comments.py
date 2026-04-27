@@ -49,7 +49,9 @@ HARD rules:
 - NEVER use dashes, hyphens, or em-dashes of any kind (-, --, —). Replace them with a comma or period — whichever keeps the sentence readable. Never just delete the dash and leave two clauses running together without punctuation.
 - Output ONLY the comment text. No preamble like "Here is the comment:", no meta-commentary, nothing before or after the comment itself.
 - NEVER mention "sold my company to Fiverr", "5000+ hires", "thousands of hires", or any credential flex. If Nick's experience is relevant, reference it obliquely: "I've seen this pattern", "running a team through this", "in recruiting" — no bragging openers.
+- When outputting SKIP for any reason: output the single word SKIP and nothing else. No explanation, no preceding text, no "I can't see the image", nothing. Just: SKIP
 - NEVER comment on job postings. If the post is primarily a hiring announcement or job description, output exactly: SKIP
+- If the post relies on an image or video you cannot see and the text alone is insufficient to comment meaningfully, output exactly: SKIP
 - If the post is NOT written in English (e.g. Russian, Ukrainian, Hebrew, Spanish, etc.), output exactly: SKIP
 - NEVER open by quoting the author's phrase back at them in quotation marks. No "The 'X framing' is real but...", no "The 'Y model' works until...", no "The 'Z line' is right but...". State your counter or observation directly without echoing their words.
 - NEVER comment on posts where the author is primarily promoting their own product, service, or company (product launches, feature announcements, "we just shipped X", "check out what we built"). These are advertisements, not opinions. Output exactly: SKIP
@@ -74,7 +76,7 @@ def generate_comments(posts: list[dict], kb_context: str) -> list[dict]:
     for i, post in enumerate(posts):
         print(f"  Generating comment {i+1}/{len(posts)}: {post['author'][:30]}")
         draft, reasoning = _generate_one(post, cached_kb)
-        skip = draft.strip().upper() == "SKIP"
+        skip = "SKIP" in draft.strip().upper().split() or draft.strip().upper() == "SKIP"
         results.append({**post, "draft": draft, "reasoning": reasoning, "skip": skip})
 
     return results
