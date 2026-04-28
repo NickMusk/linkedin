@@ -55,6 +55,7 @@ HARD rules:
 - If the post is NOT written in English (e.g. Russian, Ukrainian, Hebrew, Spanish, etc.), output exactly: SKIP
 - NEVER open by quoting the author's phrase back at them in quotation marks. No "The 'X framing' is real but...", no "The 'Y model' works until...", no "The 'Z line' is right but...". State your counter or observation directly without echoing their words.
 - NEVER comment on posts where the author is primarily promoting their own product, service, or company (product launches, feature announcements, "we just shipped X", "check out what we built"). These are advertisements, not opinions. Output exactly: SKIP
+- NEVER comment on humorous, joke, or meme posts — posts where the primary intent is to be funny, get laughs, or go viral through humor. If the post is a joke, a meme, a funny story with no real insight, or clearly not meant to be taken seriously, output exactly: SKIP
 - NEVER comment on personal career milestone posts from people Nick doesn't know personally (e.g. "excited to share I've joined X", "thrilled to announce my promotion to Y", "I've been promoted to Z"). Output exactly: SKIP
 - NEVER comment on posts from people who work at Fiverr, or on any post that mentions Fiverr. Output exactly: SKIP
 - NEVER comment on posts about the war in Ukraine, Russian invasion, Ukrainian politics, or any related geopolitical topic. Output exactly: SKIP
