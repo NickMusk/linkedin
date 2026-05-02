@@ -25,6 +25,7 @@ SETTINGS_FILE      = os.path.join(DATA_DIR, "settings.json")
 COMMENTS_LOG       = os.path.join(DATA_DIR, "comments_log.json")
 TW_STATUS_FILE     = os.path.join(DATA_DIR, "twitter_status.json")
 TW_LOG             = os.path.join(DATA_DIR, "twitter_log.json")
+TW_QUEUE_FILE      = os.path.join(DATA_DIR, "twitter_queue.json")
 
 _PREV_DEFAULTS = {
     "max_per_day": 18, "max_per_session": 6, "active_start": 8, "active_end": 21,
@@ -116,6 +117,40 @@ def log_comment(author, post_url, post_excerpt, comment_text):
         "excerpt": post_excerpt[:150], "comment": comment_text,
     })
     save_json(COMMENTS_LOG, entries[-500:])
+
+
+def get_tw_queue() -> list:
+    return load_json(TW_QUEUE_FILE, [])
+
+def save_tw_queue(q: list):
+    save_json(TW_QUEUE_FILE, q)
+
+def add_to_tw_queue(items: list):
+    import uuid
+    q = get_tw_queue()
+    existing_urls = {it["tweet_url"] for it in q}
+    now = datetime.now(timezone.utc).isoformat()
+    for it in items:
+        if it["tweet_url"] in existing_urls:
+            continue
+        q.append({
+            "id": str(uuid.uuid4())[:8],
+            "author": it.get("author", ""),
+            "author_username": it.get("author_username", it.get("author", "")),
+            "tweet_url": it["tweet_url"],
+            "tweet_text": it.get("text", "")[:280],
+            "reply": it.get("draft", ""),
+            "status": "pending",
+            "generated_at": now,
+            "posted_at": None,
+        })
+    save_tw_queue(q)
+    return len(q)
+
+def tw_queue_today_posted() -> int:
+    today = today_str()
+    return sum(1 for it in get_tw_queue()
+               if it.get("status") == "posted" and (it.get("posted_at") or "")[:10] == today)
 
 
 def log_tw_reply(author, tweet_url, tweet_text, reply_text):
@@ -264,102 +299,113 @@ TEMPLATE = """
   </div>
 
   <!-- ── Twitter ── -->
-  <h2 class="text-xs font-semibold text-sky-400 uppercase tracking-widest mb-3">Twitter / X</h2>
+  <h2 class="text-xs font-semibold text-sky-400 uppercase tracking-widest mb-3">Twitter / X — Manual Queue</h2>
 
+  <!-- Stats + Generate -->
   <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
     <div class="bg-gray-900 rounded-xl p-4">
-      <div class="text-xs text-gray-500 mb-1">Today's replies</div>
-      <div class="text-3xl font-bold {% if tw.today_count >= settings.tw_max_per_day %}text-red-400{% else %}text-green-400{% endif %}">
-        {{ tw.today_count }}<span class="text-lg text-gray-500">/{{ settings.tw_max_per_day }}</span>
+      <div class="text-xs text-gray-500 mb-1">Posted today</div>
+      <div class="text-3xl font-bold {% if tw_posted_today >= 5 %}text-red-400{% elif tw_posted_today >= 3 %}text-yellow-400{% else %}text-green-400{% endif %}">
+        {{ tw_posted_today }}<span class="text-lg text-gray-500">/5</span>
       </div>
     </div>
     <div class="bg-gray-900 rounded-xl p-4">
-      <div class="text-xs text-gray-500 mb-1">Status</div>
-      <div class="text-lg font-semibold mt-1
-        {% if tw.state == 'posting' %}text-yellow-400
-        {% elif tw.state == 'sleeping' %}text-sky-400
-        {% elif tw.state == 'idle' %}text-gray-400
-        {% else %}text-gray-300{% endif %}">{{ tw.state | title }}</div>
+      <div class="text-xs text-gray-500 mb-1">Pending review</div>
+      <div class="text-3xl font-bold text-yellow-400">{{ tw_queue | selectattr('status','eq','pending') | list | length }}</div>
     </div>
     <div class="bg-gray-900 rounded-xl p-4">
-      <div class="text-xs text-gray-500 mb-1">Last session</div>
-      <div class="text-lg font-semibold mt-1">{{ fmt(tw.last_session) }}</div>
+      <div class="text-xs text-gray-500 mb-1">Ready to post</div>
+      <div class="text-3xl font-bold text-sky-400">{{ tw_queue | selectattr('status','eq','approved') | list | length }}</div>
     </div>
-    <div class="bg-gray-900 rounded-xl p-4">
-      <div class="text-xs text-gray-500 mb-1">Next session</div>
-      <div class="text-lg font-semibold mt-1 text-sky-300">{{ fmt(tw.next_session) }}</div>
+    <div class="bg-gray-900 rounded-xl p-4 flex items-center">
+      <form method="POST" action="/twitter/generate" class="w-full">
+        <button type="submit" class="w-full bg-sky-600 hover:bg-sky-500 text-white rounded-lg px-4 py-2 font-semibold transition-colors text-sm">
+          Generate replies
+        </button>
+      </form>
     </div>
   </div>
 
-  <!-- Twitter Settings -->
+  <!-- Pending approval -->
+  {% set pending = tw_queue | selectattr('status','eq','pending') | list %}
+  {% if pending %}
   <div class="bg-gray-900 rounded-xl p-6 mb-6">
-    <h3 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-4">Twitter Settings</h3>
-    <form method="POST" action="/settings/twitter" class="grid grid-cols-2 md:grid-cols-3 gap-4">
-      <label class="flex flex-col gap-1">
-        <span class="text-xs text-gray-500">Max replies/day</span>
-        <input type="number" name="tw_max_per_day" value="{{ settings.tw_max_per_day }}" min="1" max="50"
-          class="bg-gray-800 rounded-lg px-3 py-2 text-white border border-gray-700 focus:border-sky-500 outline-none">
-      </label>
-      <label class="flex flex-col gap-1">
-        <span class="text-xs text-gray-500">Max per session</span>
-        <input type="number" name="tw_max_per_session" value="{{ settings.tw_max_per_session }}" min="1" max="20"
-          class="bg-gray-800 rounded-lg px-3 py-2 text-white border border-gray-700 focus:border-sky-500 outline-none">
-      </label>
-      <label class="flex flex-col gap-1">
-        <span class="text-xs text-gray-500">Session gap min (min)</span>
-        <input type="number" name="tw_gap_min" value="{{ settings.tw_gap_min }}" min="60" max="720"
-          class="bg-gray-800 rounded-lg px-3 py-2 text-white border border-gray-700 focus:border-sky-500 outline-none">
-      </label>
-      <label class="flex flex-col gap-1">
-        <span class="text-xs text-gray-500">Session gap max (min)</span>
-        <input type="number" name="tw_gap_max" value="{{ settings.tw_gap_max }}" min="60" max="720"
-          class="bg-gray-800 rounded-lg px-3 py-2 text-white border border-gray-700 focus:border-sky-500 outline-none">
-      </label>
-      <label class="flex flex-col gap-1">
-        <span class="text-xs text-gray-500">Delay between replies (min s)</span>
-        <input type="number" name="tw_reply_delay_min" value="{{ settings.tw_reply_delay_min }}" min="60" max="600"
-          class="bg-gray-800 rounded-lg px-3 py-2 text-white border border-gray-700 focus:border-sky-500 outline-none">
-      </label>
-      <label class="flex flex-col gap-1">
-        <span class="text-xs text-gray-500">Delay between replies (max s)</span>
-        <input type="number" name="tw_reply_delay_max" value="{{ settings.tw_reply_delay_max }}" min="60" max="600"
-          class="bg-gray-800 rounded-lg px-3 py-2 text-white border border-gray-700 focus:border-sky-500 outline-none">
-      </label>
-      <div class="flex items-end col-span-2 md:col-span-3">
-        <button type="submit"
-          class="bg-sky-600 hover:bg-sky-500 text-white rounded-lg px-6 py-2 font-semibold transition-colors">Save Twitter</button>
-      </div>
-    </form>
-    {% if tw.last_error %}
-    <div class="mt-3 text-red-400 text-sm">Last error: {{ tw.last_error }}</div>
-    {% endif %}
-  </div>
-
-  <!-- Recent Twitter replies -->
-  <div class="bg-gray-900 rounded-xl p-6">
-    <h3 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-4">
-      Recent Twitter Replies <span class="text-gray-600 font-normal">({{ tw_replies|length }})</span>
-    </h3>
-    {% if not tw_replies %}
-    <div class="text-gray-600 text-sm">No replies posted yet.</div>
-    {% else %}
+    <h3 class="text-sm font-semibold text-yellow-400 uppercase tracking-wider mb-4">Pending Review ({{ pending|length }})</h3>
     <div class="space-y-4">
-      {% for r in tw_replies|reverse %}
-      <div class="border-l-2 border-sky-800 pl-4">
+      {% for it in pending|reverse %}
+      <div class="border-l-2 border-yellow-700 pl-4">
         <div class="flex items-center gap-3 mb-1">
-          <span class="text-xs text-gray-500">{{ fmt(r.ts) }}</span>
-          <a href="{{ r.tweet_url }}" target="_blank"
-            class="text-xs text-sky-400 hover:text-sky-300 truncate max-w-xs">{{ r.author }}</a>
+          <a href="{{ it.tweet_url }}" target="_blank" class="text-xs text-sky-400 hover:text-sky-300">@{{ it.author_username }}</a>
+          <span class="text-xs text-gray-600">{{ it.generated_at[:16].replace('T',' ') }}</span>
         </div>
-        <p class="text-xs text-gray-500 mb-1 italic truncate">{{ r.excerpt }}</p>
-        <p class="text-sm text-gray-200">{{ r.reply }}</p>
+        <p class="text-xs text-gray-500 italic mb-2">{{ it.tweet_text[:140] }}{% if it.tweet_text|length > 140 %}…{% endif %}</p>
+        <p class="text-sm text-gray-100 mb-3">{{ it.reply }}</p>
+        <div class="flex gap-2">
+          <form method="POST" action="/twitter/queue/{{ it.id }}/approve">
+            <button class="bg-green-700 hover:bg-green-600 text-white text-xs rounded px-3 py-1 font-semibold">Approve</button>
+          </form>
+          <form method="POST" action="/twitter/queue/{{ it.id }}/reject">
+            <button class="bg-gray-700 hover:bg-gray-600 text-gray-300 text-xs rounded px-3 py-1">Reject</button>
+          </form>
+        </div>
       </div>
       {% endfor %}
     </div>
-    {% endif %}
   </div>
+  {% endif %}
+
+  <!-- Approved / ready to post -->
+  {% set approved = tw_queue | selectattr('status','eq','approved') | list %}
+  {% if approved %}
+  <div class="bg-gray-900 rounded-xl p-6 mb-6">
+    <h3 class="text-sm font-semibold text-sky-400 uppercase tracking-wider mb-4">Ready to Post ({{ approved|length }}) — post manually in browser</h3>
+    <div class="space-y-4">
+      {% for it in approved %}
+      <div class="border-l-2 border-sky-600 pl-4">
+        <div class="flex items-center gap-3 mb-1">
+          <a href="{{ it.tweet_url }}" target="_blank" class="text-xs text-sky-400 hover:text-sky-300">@{{ it.author_username }}</a>
+        </div>
+        <p class="text-xs text-gray-500 italic mb-2">{{ it.tweet_text[:140] }}{% if it.tweet_text|length > 140 %}…{% endif %}</p>
+        <p class="text-sm text-gray-100 mb-3 select-all bg-gray-800 rounded p-2">{{ it.reply }}</p>
+        <div class="flex gap-2">
+          <button onclick="navigator.clipboard.writeText('{{ it.reply | replace("'", "\\'") }}'); this.textContent='Copied!'; setTimeout(()=>this.textContent='Copy text',1500)"
+            class="bg-sky-700 hover:bg-sky-600 text-white text-xs rounded px-3 py-1 font-semibold">Copy text</button>
+          <form method="POST" action="/twitter/queue/{{ it.id }}/posted">
+            <button class="bg-gray-700 hover:bg-green-700 text-gray-300 hover:text-white text-xs rounded px-3 py-1 transition-colors">Mark posted</button>
+          </form>
+          <form method="POST" action="/twitter/queue/{{ it.id }}/reject">
+            <button class="text-gray-600 hover:text-gray-400 text-xs rounded px-3 py-1">Discard</button>
+          </form>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Recently posted -->
+  {% set posted = tw_queue | selectattr('status','eq','posted') | list %}
+  {% if posted %}
+  <div class="bg-gray-900 rounded-xl p-6">
+    <h3 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-4">Posted ({{ posted|length }})</h3>
+    <div class="space-y-3">
+      {% for it in posted|reverse %}
+      <div class="border-l-2 border-gray-700 pl-4">
+        <div class="flex items-center gap-3 mb-1">
+          <span class="text-xs text-gray-600">{{ (it.posted_at or '')[:16].replace('T',' ') }}</span>
+          <a href="{{ it.tweet_url }}" target="_blank" class="text-xs text-gray-500 hover:text-gray-400">@{{ it.author_username }}</a>
+        </div>
+        <p class="text-sm text-gray-400">{{ it.reply }}</p>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
 
 </div>
+<script>
+// auto-refresh only if no pending/approved items are being interacted with
+</script>
 </body>
 </html>
 """
@@ -374,8 +420,71 @@ def index():
         settings=get_settings(),
         li_comments=get_recent_comments(),
         tw_replies=get_recent_tw_replies(),
+        tw_queue=get_tw_queue(),
+        tw_posted_today=tw_queue_today_posted(),
         fmt=fmt_time,
     )
+
+
+@app.route("/twitter/generate", methods=["POST"])
+def twitter_generate():
+    def _run():
+        try:
+            from fetch_tweets import fetch_tweets
+            from generate_replies import generate_replies
+            from knowledge_base import build_context
+            log.info("Twitter: fetching tweets for queue...")
+            tweets = fetch_tweets()
+            if not tweets:
+                log.info("Twitter: no new tweets found.")
+                return
+            kb = build_context()
+            items = generate_replies(tweets, kb)
+            publishable = [it for it in items if not it.get("skip") and it.get("draft", "").strip()]
+            # Attach tweet_url from url field
+            for it in publishable:
+                it["tweet_url"] = it.get("url", "")
+            added = add_to_tw_queue(publishable)
+            log.info(f"Twitter: added {len(publishable)} replies to queue (total {added}).")
+        except Exception as e:
+            log.error(f"Twitter generate error: {e}", exc_info=True)
+    threading.Thread(target=_run, daemon=True).start()
+    return redirect("/")
+
+
+@app.route("/twitter/queue/<item_id>/approve", methods=["POST"])
+def twitter_queue_approve(item_id):
+    q = get_tw_queue()
+    for it in q:
+        if it["id"] == item_id:
+            it["status"] = "approved"
+            break
+    save_tw_queue(q)
+    return redirect("/")
+
+
+@app.route("/twitter/queue/<item_id>/reject", methods=["POST"])
+def twitter_queue_reject(item_id):
+    q = get_tw_queue()
+    for it in q:
+        if it["id"] == item_id:
+            it["status"] = "rejected"
+            break
+    save_tw_queue(q)
+    return redirect("/")
+
+
+@app.route("/twitter/queue/<item_id>/posted", methods=["POST"])
+def twitter_queue_posted(item_id):
+    q = get_tw_queue()
+    for it in q:
+        if it["id"] == item_id:
+            it["status"] = "posted"
+            it["posted_at"] = datetime.now(timezone.utc).isoformat()
+            log_tw_reply(it["author"], it["tweet_url"], it["tweet_text"], it["reply"])
+            break
+    save_tw_queue(q)
+    return redirect("/")
 
 
 @app.route("/settings", methods=["POST"])
@@ -642,7 +751,8 @@ def twitter_loop():
 
 if __name__ == "__main__":
     threading.Thread(target=linkedin_loop, daemon=True, name="linkedin").start()
-    threading.Thread(target=twitter_loop, daemon=True, name="twitter").start()
+    # Twitter loop disabled — manual queue via dashboard instead
+    # threading.Thread(target=twitter_loop, daemon=True, name="twitter").start()
 
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port)
