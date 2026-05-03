@@ -4,7 +4,7 @@ import requests
 from datetime import datetime, timezone, timedelta
 from config import UNIPILE_API_KEY, UNIPILE_DSN, UNIPILE_ACCOUNT_ID, MIN_LIKES, DATA_DIR
 
-MAX_POST_AGE_HOURS = 4   # skip posts older than this
+MAX_POST_AGE_HOURS = 48  # skip posts older than this
 SEEN_URL_TTL_DAYS = 3
 SEEN_URLS_FILE = os.path.join(DATA_DIR, "seen_urls.json")
 PUBLISHED_URLS_FILE = os.path.join(DATA_DIR, "published_urls.json")
