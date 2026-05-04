@@ -5,7 +5,6 @@ from datetime import datetime, timezone, timedelta
 from config import UNIPILE_API_KEY, UNIPILE_DSN, UNIPILE_ACCOUNT_ID, MIN_LIKES, DATA_DIR
 
 MAX_POST_AGE_HOURS = 48  # skip posts older than this
-SEEN_URL_TTL_DAYS = 3
 SEEN_URLS_FILE = os.path.join(DATA_DIR, "seen_urls.json")
 PUBLISHED_URLS_FILE = os.path.join(DATA_DIR, "published_urls.json")
 
@@ -14,15 +13,7 @@ FEED_BATCH = 10  # LinkedIn returns 10 per page max
 
 
 def _load_seen_urls() -> set:
-    if not os.path.exists(SEEN_URLS_FILE):
-        return set()
-    with open(SEEN_URLS_FILE) as f:
-        data = json.load(f)
-    cutoff = datetime.now(timezone.utc) - timedelta(days=SEEN_URL_TTL_DAYS)
-    if isinstance(data, list):
-        return set(data)
-    return {url for url, ts in data.items()
-            if datetime.fromisoformat(ts) >= cutoff}
+    return set()
 
 
 def _load_published_urls() -> set:
@@ -38,18 +29,6 @@ def mark_url_published(url: str):
     with open(PUBLISHED_URLS_FILE, "w") as f:
         json.dump(list(published), f)
 
-
-def _save_seen_urls(seen: set):
-    existing = {}
-    if os.path.exists(SEEN_URLS_FILE):
-        with open(SEEN_URLS_FILE) as f:
-            raw = json.load(f)
-        if isinstance(raw, dict):
-            existing = raw
-    now = datetime.now(timezone.utc).isoformat()
-    merged = {url: existing.get(url, now) for url in seen}
-    with open(SEEN_URLS_FILE, "w") as f:
-        json.dump(merged, f)
 
 
 def _unipile_feed_page(pagination_token: str = None) -> tuple:
@@ -169,8 +148,6 @@ def fetch_feed_posts(target: int = 30) -> list[dict]:
 
         if not pagination_token:
             break
-
-    _save_seen_urls(seen_urls)
     # Sort by engagement score descending so best posts get commented on first
     posts.sort(key=lambda p: p.get("engagement_score", 0), reverse=True)
     return posts[:target]
