@@ -109,6 +109,24 @@ def get_recent_tw_replies(limit=20):
     return load_json(TW_LOG, [])[-limit:]
 
 
+_api_health_cache = {"ok": None, "ts": 0}
+
+def check_api_health() -> bool:
+    now = time.time()
+    if now - _api_health_cache["ts"] < 300:
+        return _api_health_cache["ok"]
+    try:
+        import anthropic
+        client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+        client.messages.create(model="claude-haiku-4-5-20251001",
+                               max_tokens=1, messages=[{"role": "user", "content": "hi"}])
+        _api_health_cache.update(ok=True, ts=now)
+        return True
+    except Exception as e:
+        _api_health_cache.update(ok=False, ts=now)
+        return False
+
+
 def log_comment(author, post_url, post_excerpt, comment_text):
     entries = load_json(COMMENTS_LOG, [])
     entries.append({
@@ -199,7 +217,15 @@ TEMPLATE = """
 
   <div class="flex items-center justify-between mb-8">
     <h1 class="text-2xl font-bold">Commenter Dashboard</h1>
-    <span class="text-xs text-gray-500">auto-refreshes every 60s · SF time</span>
+    <div class="flex items-center gap-4">
+      <div class="flex items-center gap-2">
+        <span class="w-2.5 h-2.5 rounded-full {% if api_ok %}bg-green-400{% else %}bg-red-500 animate-pulse{% endif %}"></span>
+        <span class="text-xs {% if api_ok %}text-gray-500{% else %}text-red-400 font-semibold{% endif %}">
+          {% if api_ok %}Anthropic API OK{% else %}Anthropic API — no credits!{% endif %}
+        </span>
+      </div>
+      <span class="text-xs text-gray-500">auto-refreshes every 60s · SF time</span>
+    </div>
   </div>
 
   <!-- ── LinkedIn ── -->
@@ -423,6 +449,7 @@ def index():
         tw_queue=get_tw_queue(),
         tw_posted_today=tw_queue_today_posted(),
         fmt=fmt_time,
+        api_ok=check_api_health(),
     )
 
 
