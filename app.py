@@ -158,6 +158,8 @@ def add_to_tw_queue(items: list):
             "tweet_url": it["tweet_url"],
             "tweet_text": it.get("text", "")[:280],
             "reply": it.get("draft", ""),
+            "likes": it.get("likes", 0),
+            "tweet_posted_at": it.get("posted_at", ""),
             "status": "pending",
             "generated_at": now,
             "posted_at": None,
@@ -327,8 +329,8 @@ TEMPLATE = """
   <!-- ── Twitter ── -->
   <h2 class="text-xs font-semibold text-sky-400 uppercase tracking-widest mb-3">Twitter / X — Manual Queue</h2>
 
-  <!-- Stats + Generate -->
-  <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+  <!-- Stats -->
+  <div class="grid grid-cols-3 gap-4 mb-6">
     <div class="bg-gray-900 rounded-xl p-4">
       <div class="text-xs text-gray-500 mb-1">Posted today</div>
       <div class="text-3xl font-bold {% if tw_posted_today >= 5 %}text-red-400{% elif tw_posted_today >= 3 %}text-yellow-400{% else %}text-green-400{% endif %}">
@@ -343,95 +345,110 @@ TEMPLATE = """
       <div class="text-xs text-gray-500 mb-1">Ready to post</div>
       <div class="text-3xl font-bold text-sky-400">{{ tw_queue | selectattr('status','eq','approved') | list | length }}</div>
     </div>
-    <div class="bg-gray-900 rounded-xl p-4 flex items-center">
-      <form method="POST" action="/twitter/generate" class="w-full">
-        <button type="submit" class="w-full bg-sky-600 hover:bg-sky-500 text-white rounded-lg px-4 py-2 font-semibold transition-colors text-sm">
-          Generate replies
-        </button>
-      </form>
-    </div>
   </div>
 
-  <!-- Pending approval -->
   {% set pending = tw_queue | selectattr('status','eq','pending') | list %}
-  {% if pending %}
-  <div class="bg-gray-900 rounded-xl p-6 mb-6">
-    <h3 class="text-sm font-semibold text-yellow-400 uppercase tracking-wider mb-4">Pending Review ({{ pending|length }})</h3>
-    <div class="space-y-4">
-      {% for it in pending|reverse %}
-      <div class="border-l-2 border-yellow-700 pl-4">
-        <div class="flex items-center gap-3 mb-1">
-          <a href="{{ it.tweet_url }}" target="_blank" class="text-xs text-sky-400 hover:text-sky-300">@{{ it.author_username }}</a>
-          <span class="text-xs text-gray-600">{{ it.generated_at[:16].replace('T',' ') }}</span>
-        </div>
-        <p class="text-xs text-gray-500 italic mb-2">{{ it.tweet_text[:140] }}{% if it.tweet_text|length > 140 %}…{% endif %}</p>
-        <p class="text-sm text-gray-100 mb-3">{{ it.reply }}</p>
-        <div class="flex gap-2">
-          <form method="POST" action="/twitter/queue/{{ it.id }}/approve">
-            <button class="bg-green-700 hover:bg-green-600 text-white text-xs rounded px-3 py-1 font-semibold">Approve</button>
-          </form>
-          <form method="POST" action="/twitter/queue/{{ it.id }}/reject">
-            <button class="bg-gray-700 hover:bg-gray-600 text-gray-300 text-xs rounded px-3 py-1">Reject</button>
-          </form>
-        </div>
-      </div>
-      {% endfor %}
-    </div>
-  </div>
-  {% endif %}
-
-  <!-- Approved / ready to post -->
   {% set approved = tw_queue | selectattr('status','eq','approved') | list %}
-  {% if approved %}
-  <div class="bg-gray-900 rounded-xl p-6 mb-6">
-    <h3 class="text-sm font-semibold text-sky-400 uppercase tracking-wider mb-4">Ready to Post ({{ approved|length }}) — post manually in browser</h3>
-    <div class="space-y-4">
-      {% for it in approved %}
-      <div class="border-l-2 border-sky-600 pl-4">
-        <div class="flex items-center gap-3 mb-1">
-          <a href="{{ it.tweet_url }}" target="_blank" class="text-xs text-sky-400 hover:text-sky-300">@{{ it.author_username }}</a>
-        </div>
-        <p class="text-xs text-gray-500 italic mb-2">{{ it.tweet_text[:140] }}{% if it.tweet_text|length > 140 %}…{% endif %}</p>
-        <p class="text-sm text-gray-100 mb-3 select-all bg-gray-800 rounded p-2">{{ it.reply }}</p>
-        <div class="flex gap-2">
-          <button onclick="navigator.clipboard.writeText('{{ it.reply | replace("'", "\\'") }}'); this.textContent='Copied!'; setTimeout(()=>this.textContent='Copy text',1500)"
-            class="bg-sky-700 hover:bg-sky-600 text-white text-xs rounded px-3 py-1 font-semibold">Copy text</button>
-          <form method="POST" action="/twitter/queue/{{ it.id }}/posted">
-            <button class="bg-gray-700 hover:bg-green-700 text-gray-300 hover:text-white text-xs rounded px-3 py-1 transition-colors">Mark posted</button>
-          </form>
-          <form method="POST" action="/twitter/queue/{{ it.id }}/reject">
-            <button class="text-gray-600 hover:text-gray-400 text-xs rounded px-3 py-1">Discard</button>
-          </form>
-        </div>
-      </div>
-      {% endfor %}
-    </div>
+  {% set posted = tw_queue | selectattr('status','eq','posted') | list %}
+
+  {% if pending or approved %}
+  <div class="bg-gray-900 rounded-xl overflow-hidden mb-6">
+    <table class="w-full text-sm">
+      <thead>
+        <tr class="text-xs text-gray-500 uppercase border-b border-gray-800">
+          <th class="text-left px-4 py-3 w-20">Date</th>
+          <th class="text-left px-4 py-3 w-28">Author</th>
+          <th class="text-left px-4 py-3">Tweet</th>
+          <th class="text-left px-4 py-3">Our reply</th>
+          <th class="text-right px-4 py-3 w-16">Likes</th>
+          <th class="text-right px-4 py-3 w-36">Actions</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-gray-800">
+        {% for it in (approved + pending)|sort(attribute='generated_at', reverse=True) %}
+        <tr class="hover:bg-gray-850 {% if it.status == 'approved' %}bg-sky-950{% endif %}">
+          <td class="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">
+            {{ (it.tweet_posted_at or it.generated_at or '')[:10] }}
+          </td>
+          <td class="px-4 py-3">
+            <a href="{{ it.tweet_url }}" target="_blank" class="text-sky-400 hover:text-sky-300 text-xs">@{{ it.author_username }}</a>
+          </td>
+          <td class="px-4 py-3 text-xs text-gray-400 max-w-xs">
+            <span title="{{ it.tweet_text }}">{{ it.tweet_text[:100] }}{% if it.tweet_text|length > 100 %}…{% endif %}</span>
+          </td>
+          <td class="px-4 py-3 text-xs text-gray-100 max-w-xs">
+            {% if it.status == 'approved' %}
+            <span class="select-all cursor-text" title="{{ it.reply }}">{{ it.reply[:120] }}{% if it.reply|length > 120 %}…{% endif %}</span>
+            {% else %}
+            <span title="{{ it.reply }}">{{ it.reply[:120] }}{% if it.reply|length > 120 %}…{% endif %}</span>
+            {% endif %}
+          </td>
+          <td class="px-4 py-3 text-right text-xs text-gray-400">{{ it.likes or '—' }}</td>
+          <td class="px-4 py-3 text-right">
+            <div class="flex gap-1 justify-end flex-wrap">
+              {% if it.status == 'pending' %}
+              <form method="POST" action="/twitter/queue/{{ it.id }}/approve">
+                <button class="bg-green-800 hover:bg-green-700 text-green-200 text-xs rounded px-2 py-1">✓</button>
+              </form>
+              <form method="POST" action="/twitter/queue/{{ it.id }}/reject">
+                <button class="bg-gray-800 hover:bg-gray-700 text-gray-400 text-xs rounded px-2 py-1">✕</button>
+              </form>
+              {% elif it.status == 'approved' %}
+              <button onclick="navigator.clipboard.writeText(this.dataset.text); this.textContent='✓'; setTimeout(()=>this.textContent='Copy',1500)"
+                data-text="{{ it.reply | replace('"', '&quot;') }}"
+                class="bg-sky-800 hover:bg-sky-700 text-sky-200 text-xs rounded px-2 py-1">Copy</button>
+              <form method="POST" action="/twitter/queue/{{ it.id }}/posted">
+                <button class="bg-gray-800 hover:bg-green-800 text-gray-300 hover:text-green-200 text-xs rounded px-2 py-1">Posted</button>
+              </form>
+              <form method="POST" action="/twitter/queue/{{ it.id }}/reject">
+                <button class="bg-gray-800 hover:bg-gray-700 text-gray-500 text-xs rounded px-2 py-1">✕</button>
+              </form>
+              {% endif %}
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
   </div>
+  {% else %}
+  <div class="bg-gray-900 rounded-xl p-6 mb-6 text-gray-600 text-sm">No replies in queue. Auto-generates every 6h.</div>
   {% endif %}
 
-  <!-- Recently posted -->
-  {% set posted = tw_queue | selectattr('status','eq','posted') | list %}
+  <!-- Posted history -->
   {% if posted %}
-  <div class="bg-gray-900 rounded-xl p-6">
-    <h3 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-4">Posted ({{ posted|length }})</h3>
-    <div class="space-y-3">
-      {% for it in posted|reverse %}
-      <div class="border-l-2 border-gray-700 pl-4">
-        <div class="flex items-center gap-3 mb-1">
-          <span class="text-xs text-gray-600">{{ (it.posted_at or '')[:16].replace('T',' ') }}</span>
-          <a href="{{ it.tweet_url }}" target="_blank" class="text-xs text-gray-500 hover:text-gray-400">@{{ it.author_username }}</a>
-        </div>
-        <p class="text-sm text-gray-400">{{ it.reply }}</p>
-      </div>
-      {% endfor %}
+  <div class="bg-gray-900 rounded-xl overflow-hidden">
+    <div class="px-4 py-3 border-b border-gray-800">
+      <h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Posted ({{ posted|length }})</h3>
     </div>
+    <table class="w-full text-sm">
+      <thead>
+        <tr class="text-xs text-gray-600 border-b border-gray-800">
+          <th class="text-left px-4 py-2 w-24">Posted at</th>
+          <th class="text-left px-4 py-2 w-28">Author</th>
+          <th class="text-left px-4 py-2">Tweet</th>
+          <th class="text-left px-4 py-2">Reply</th>
+          <th class="text-right px-4 py-2 w-16">Likes</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-gray-800">
+        {% for it in posted|reverse %}
+        <tr class="hover:bg-gray-900">
+          <td class="px-4 py-2 text-xs text-gray-600 whitespace-nowrap">{{ (it.posted_at or '')[:10] }}</td>
+          <td class="px-4 py-2">
+            <a href="{{ it.tweet_url }}" target="_blank" class="text-xs text-gray-500 hover:text-gray-400">@{{ it.author_username }}</a>
+          </td>
+          <td class="px-4 py-2 text-xs text-gray-600 max-w-xs truncate">{{ it.tweet_text[:80] }}{% if it.tweet_text|length > 80 %}…{% endif %}</td>
+          <td class="px-4 py-2 text-xs text-gray-400 max-w-xs">{{ it.reply[:100] }}{% if it.reply|length > 100 %}…{% endif %}</td>
+          <td class="px-4 py-2 text-right text-xs text-gray-600">{{ it.likes or '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
   </div>
   {% endif %}
 
 </div>
-<script>
-// auto-refresh only if no pending/approved items are being interacted with
-</script>
 </body>
 </html>
 """
@@ -453,30 +470,35 @@ def index():
     )
 
 
-@app.route("/twitter/generate", methods=["POST"])
-def twitter_generate():
-    def _run():
+def _run_twitter_generate():
+    try:
+        from fetch_tweets import fetch_tweets
+        from generate_replies import generate_replies
+        from knowledge_base import build_context
+        log.info("Twitter: fetching tweets for queue...")
+        tweets = fetch_tweets()
+        if not tweets:
+            log.info("Twitter: no new tweets found.")
+            return
+        kb = build_context()
+        items = generate_replies(tweets, kb)
+        publishable = [it for it in items if not it.get("skip") and it.get("draft", "").strip()]
+        for it in publishable:
+            it["tweet_url"] = it.get("url", "")
+        added = add_to_tw_queue(publishable)
+        log.info(f"Twitter: added {len(publishable)} replies to queue (total {added}).")
+    except Exception as e:
+        log.error(f"Twitter generate error: {e}", exc_info=True)
+
+
+def twitter_generate_loop():
+    log.info("Twitter generate loop started (every 6h, queue only — no auto-posting).")
+    while True:
         try:
-            from fetch_tweets import fetch_tweets
-            from generate_replies import generate_replies
-            from knowledge_base import build_context
-            log.info("Twitter: fetching tweets for queue...")
-            tweets = fetch_tweets()
-            if not tweets:
-                log.info("Twitter: no new tweets found.")
-                return
-            kb = build_context()
-            items = generate_replies(tweets, kb)
-            publishable = [it for it in items if not it.get("skip") and it.get("draft", "").strip()]
-            # Attach tweet_url from url field
-            for it in publishable:
-                it["tweet_url"] = it.get("url", "")
-            added = add_to_tw_queue(publishable)
-            log.info(f"Twitter: added {len(publishable)} replies to queue (total {added}).")
+            _run_twitter_generate()
         except Exception as e:
-            log.error(f"Twitter generate error: {e}", exc_info=True)
-    threading.Thread(target=_run, daemon=True).start()
-    return redirect("/")
+            log.error(f"Twitter generate loop error: {e}", exc_info=True)
+        time.sleep(6 * 3600)
 
 
 @app.route("/twitter/queue/<item_id>/approve", methods=["POST"])
@@ -780,8 +802,7 @@ def twitter_loop():
 
 if __name__ == "__main__":
     threading.Thread(target=linkedin_loop, daemon=True, name="linkedin").start()
-    # Twitter loop disabled — manual queue via dashboard instead
-    # threading.Thread(target=twitter_loop, daemon=True, name="twitter").start()
+    threading.Thread(target=twitter_generate_loop, daemon=True, name="twitter-gen").start()
 
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port)
