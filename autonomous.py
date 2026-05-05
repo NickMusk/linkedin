@@ -32,8 +32,8 @@ SF_TZ          = ZoneInfo("America/Los_Angeles")
 ACTIVE_START_H = 9           # 09:00 SF
 ACTIVE_END_H   = 18          # 18:00 SF
 
-MAX_COMMENTS_PER_DAY = 10
-MAX_PER_SESSION      = 3     # comments per single run (natural burst size)
+MAX_COMMENTS_PER_DAY = 20
+MAX_PER_SESSION      = 6     # comments per single run (natural burst size)
 
 SESSION_GAP_MIN = 150        # min minutes between sessions
 SESSION_GAP_MAX = 270        # max minutes between sessions
