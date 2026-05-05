@@ -359,7 +359,7 @@ TEMPLATE = """
         <a href="{{ it.tweet_url }}" target="_blank" class="text-sky-400 hover:text-sky-300 text-xs font-semibold">@{{ it.author_username }}</a>
         <span class="text-xs text-gray-600">{{ (it.tweet_posted_at or it.generated_at or '')[:10] }}</span>
         <span class="text-xs text-gray-600">{{ it.likes or '' }}{% if it.likes %} likes{% endif %}</span>
-        <span class="ml-auto text-xs px-2 py-0.5 rounded-full {% if it.status == 'approved' %}bg-sky-900 text-sky-300{% else %}bg-gray-800 text-yellow-400{% endif %}">
+        <span data-badge class="ml-auto text-xs px-2 py-0.5 rounded-full {% if it.status == 'approved' %}bg-sky-900 text-sky-300{% else %}bg-gray-800 text-yellow-400{% endif %}">
           {{ it.status }}
         </span>
       </div>
@@ -378,14 +378,14 @@ TEMPLATE = """
       </div>
 
       <!-- Actions -->
-      <div class="flex gap-2 justify-end">
+      <div class="flex gap-2 justify-end" data-actions="{{ it.id }}">
         {% if it.status == 'pending' %}
-        <button onclick="twAction('{{ it.id }}','approve')" class="bg-green-800 hover:bg-green-700 text-green-200 text-xs rounded px-3 py-1.5 font-medium">Approve</button>
-        <button onclick="twAction('{{ it.id }}','reject')" class="bg-gray-800 hover:bg-gray-700 text-gray-400 text-xs rounded px-3 py-1.5">Reject</button>
+        <button data-action="approve" data-id="{{ it.id }}" class="bg-green-800 hover:bg-green-700 text-green-200 text-xs rounded px-3 py-1.5 font-medium">Approve</button>
+        <button data-action="reject"  data-id="{{ it.id }}" class="bg-gray-800 hover:bg-gray-700 text-gray-400 text-xs rounded px-3 py-1.5">Reject</button>
         {% elif it.status == 'approved' %}
-        <button onclick="copyReply(this, {{ it.reply | tojson }})" class="bg-sky-800 hover:bg-sky-700 text-sky-200 text-xs rounded px-3 py-1.5 font-medium">Copy</button>
-        <button onclick="twAction('{{ it.id }}','posted')" class="bg-gray-800 hover:bg-green-800 text-gray-300 hover:text-green-200 text-xs rounded px-3 py-1.5">Mark Posted</button>
-        <button onclick="twAction('{{ it.id }}','reject')" class="bg-gray-800 hover:bg-gray-700 text-gray-500 text-xs rounded px-3 py-1.5">Reject</button>
+        <button data-action="copy"   data-reply="{{ it.reply }}" class="bg-sky-800 hover:bg-sky-700 text-sky-200 text-xs rounded px-3 py-1.5 font-medium">Copy</button>
+        <button data-action="posted" data-id="{{ it.id }}" class="bg-gray-800 hover:bg-green-800 text-gray-300 hover:text-green-200 text-xs rounded px-3 py-1.5">Mark Posted</button>
+        <button data-action="reject" data-id="{{ it.id }}" class="bg-gray-800 hover:bg-gray-700 text-gray-500 text-xs rounded px-3 py-1.5">Reject</button>
         {% endif %}
       </div>
     </div>
@@ -418,48 +418,62 @@ TEMPLATE = """
   {% endif %}
 
 <script>
-function twAction(id, action) {
+document.addEventListener('click', function(e) {
+  const btn = e.target.closest('[data-action]');
+  if (!btn) return;
+  const action = btn.dataset.action;
+
+  if (action === 'copy') {
+    const text = btn.dataset.reply;
+    navigator.clipboard.writeText(text).then(() => {
+      btn.textContent = 'Copied!';
+      setTimeout(() => btn.textContent = 'Copy', 1500);
+    });
+    return;
+  }
+
+  const id = btn.dataset.id;
   const card = document.getElementById('card-' + id);
+  btn.disabled = true;
+  btn.style.opacity = '0.5';
+
   fetch('/twitter/queue/' + id + '/' + action, {method: 'POST'})
     .then(r => r.json())
     .then(data => {
       if (action === 'reject') {
-        card.style.opacity = '0';
         card.style.transition = 'opacity 0.3s';
+        card.style.opacity = '0';
         setTimeout(() => card.remove(), 300);
       } else if (action === 'approve') {
         card.classList.add('border', 'border-sky-800');
-        card.querySelector('.text-yellow-400').textContent = 'approved';
-        card.querySelector('.text-yellow-400').className = 'text-xs px-2 py-0.5 rounded-full bg-sky-900 text-sky-300';
-        const btns = card.querySelector('.flex.gap-2');
-        btns.innerHTML = '<button onclick="copyReply(this, ' + JSON.stringify(data.reply) + ')" class="bg-sky-800 hover:bg-sky-700 text-sky-200 text-xs rounded px-3 py-1.5 font-medium">Copy</button>'
-          + '<button onclick="twAction(\'' + id + '\',\'posted\')" class="bg-gray-800 hover:bg-green-800 text-gray-300 hover:text-green-200 text-xs rounded px-3 py-1.5">Mark Posted</button>'
-          + '<button onclick="twAction(\'' + id + '\',\'reject\')" class="bg-gray-800 hover:bg-gray-700 text-gray-500 text-xs rounded px-3 py-1.5">Reject</button>';
-        updateCounter('pending', -1); updateCounter('approved', 1);
+        const badge = card.querySelector('[data-badge]');
+        if (badge) { badge.textContent = 'approved'; badge.className = 'text-xs px-2 py-0.5 rounded-full bg-sky-900 text-sky-300'; }
+        const actionsDiv = card.querySelector('[data-actions]');
+        const copyBtn = document.createElement('button');
+        copyBtn.dataset.action = 'copy';
+        copyBtn.dataset.reply = data.reply;
+        copyBtn.className = 'bg-sky-800 hover:bg-sky-700 text-sky-200 text-xs rounded px-3 py-1.5 font-medium';
+        copyBtn.textContent = 'Copy';
+        const postedBtn = document.createElement('button');
+        postedBtn.dataset.action = 'posted';
+        postedBtn.dataset.id = id;
+        postedBtn.className = 'bg-gray-800 hover:bg-green-800 text-gray-300 hover:text-green-200 text-xs rounded px-3 py-1.5';
+        postedBtn.textContent = 'Mark Posted';
+        const rejectBtn = document.createElement('button');
+        rejectBtn.dataset.action = 'reject';
+        rejectBtn.dataset.id = id;
+        rejectBtn.className = 'bg-gray-800 hover:bg-gray-700 text-gray-500 text-xs rounded px-3 py-1.5';
+        rejectBtn.textContent = 'Reject';
+        actionsDiv.innerHTML = '';
+        actionsDiv.append(copyBtn, postedBtn, rejectBtn);
       } else if (action === 'posted') {
         card.style.opacity = '0.4';
-        card.querySelector('.flex.gap-2').innerHTML = '<span class="text-xs text-green-400">Posted</span>';
-        updateCounter('approved', -1);
+        const actionsDiv = card.querySelector('[data-actions]');
+        actionsDiv.innerHTML = '<span class="text-xs text-green-400">Posted ✓</span>';
       }
-    });
-}
-
-function copyReply(btn, text) {
-  navigator.clipboard.writeText(text).then(() => {
-    btn.textContent = 'Copied!';
-    setTimeout(() => btn.textContent = 'Copy', 1500);
-  });
-}
-
-function updateCounter(status, delta) {
-  const labels = {'pending': 'Pending review', 'approved': 'Ready to post'};
-  document.querySelectorAll('.text-xs.text-gray-500').forEach(el => {
-    if (el.textContent.trim() === labels[status]) {
-      const num = el.nextElementSibling;
-      if (num) num.textContent = Math.max(0, parseInt(num.textContent) + delta);
-    }
-  });
-}
+    })
+    .catch(() => { btn.disabled = false; btn.style.opacity = '1'; });
+});
 </script>
 
 </div>
