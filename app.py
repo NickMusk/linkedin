@@ -352,67 +352,47 @@ TEMPLATE = """
   {% set posted = tw_queue | selectattr('status','eq','posted') | list %}
 
   {% if pending or approved %}
-  <div class="bg-gray-900 rounded-xl overflow-hidden mb-6">
-    <table class="w-full text-sm">
-      <thead>
-        <tr class="text-xs text-gray-500 uppercase border-b border-gray-800">
-          <th class="text-left px-4 py-3 w-20">Date</th>
-          <th class="text-left px-4 py-3 w-28">Author</th>
-          <th class="text-left px-4 py-3">Tweet</th>
-          <th class="text-left px-4 py-3">Our reply</th>
-          <th class="text-right px-4 py-3 w-16">Likes</th>
-          <th class="text-right px-4 py-3 w-36">Actions</th>
-        </tr>
-      </thead>
-      <tbody class="divide-y divide-gray-800">
-        {% for it in (approved + pending)|sort(attribute='generated_at', reverse=True) %}
-        <tr class="hover:bg-gray-850 {% if it.status == 'approved' %}bg-sky-950{% endif %}">
-          <td class="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">
-            {{ (it.tweet_posted_at or it.generated_at or '')[:10] }}
-          </td>
-          <td class="px-4 py-3">
-            <a href="{{ it.tweet_url }}" target="_blank" class="text-sky-400 hover:text-sky-300 text-xs">@{{ it.author_username }}</a>
-          </td>
-          <td class="px-4 py-3 text-xs text-gray-400 max-w-xs">
-            <span title="{{ it.tweet_text }}">{{ it.tweet_text[:100] }}{% if it.tweet_text|length > 100 %}…{% endif %}</span>
-          </td>
-          <td class="px-4 py-3 text-xs text-gray-100 max-w-xs">
-            {% if it.status == 'approved' %}
-            <span class="select-all cursor-text" title="{{ it.reply }}">{{ it.reply[:120] }}{% if it.reply|length > 120 %}…{% endif %}</span>
-            {% else %}
-            <span title="{{ it.reply }}">{{ it.reply[:120] }}{% if it.reply|length > 120 %}…{% endif %}</span>
-            {% endif %}
-          </td>
-          <td class="px-4 py-3 text-right text-xs text-gray-400">{{ it.likes or '—' }}</td>
-          <td class="px-4 py-3 text-right">
-            <div class="flex gap-1 justify-end flex-wrap">
-              {% if it.status == 'pending' %}
-              <form method="POST" action="/twitter/queue/{{ it.id }}/approve">
-                <button class="bg-green-800 hover:bg-green-700 text-green-200 text-xs rounded px-2 py-1">✓</button>
-              </form>
-              <form method="POST" action="/twitter/queue/{{ it.id }}/reject">
-                <button class="bg-gray-800 hover:bg-gray-700 text-gray-400 text-xs rounded px-2 py-1">✕</button>
-              </form>
-              {% elif it.status == 'approved' %}
-              <button onclick="navigator.clipboard.writeText(this.dataset.text); this.textContent='✓'; setTimeout(()=>this.textContent='Copy',1500)"
-                data-text="{{ it.reply | replace('"', '&quot;') }}"
-                class="bg-sky-800 hover:bg-sky-700 text-sky-200 text-xs rounded px-2 py-1">Copy</button>
-              <form method="POST" action="/twitter/queue/{{ it.id }}/posted">
-                <button class="bg-gray-800 hover:bg-green-800 text-gray-300 hover:text-green-200 text-xs rounded px-2 py-1">Posted</button>
-              </form>
-              <form method="POST" action="/twitter/queue/{{ it.id }}/reject">
-                <button class="bg-gray-800 hover:bg-gray-700 text-gray-500 text-xs rounded px-2 py-1">✕</button>
-              </form>
-              {% endif %}
-            </div>
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+  <div id="tw-queue" class="space-y-3 mb-6">
+    {% for it in (approved + pending)|sort(attribute='generated_at', reverse=True) %}
+    <div id="card-{{ it.id }}" class="bg-gray-900 rounded-xl p-4 {% if it.status == 'approved' %}border border-sky-800{% endif %}">
+      <div class="flex items-center gap-3 mb-3">
+        <a href="{{ it.tweet_url }}" target="_blank" class="text-sky-400 hover:text-sky-300 text-xs font-semibold">@{{ it.author_username }}</a>
+        <span class="text-xs text-gray-600">{{ (it.tweet_posted_at or it.generated_at or '')[:10] }}</span>
+        <span class="text-xs text-gray-600">{{ it.likes or '' }}{% if it.likes %} likes{% endif %}</span>
+        <span class="ml-auto text-xs px-2 py-0.5 rounded-full {% if it.status == 'approved' %}bg-sky-900 text-sky-300{% else %}bg-gray-800 text-yellow-400{% endif %}">
+          {{ it.status }}
+        </span>
+      </div>
+
+      <!-- Tweet text with expand -->
+      <div class="mb-3">
+        <p class="text-xs text-gray-500 leading-relaxed">
+          <span class="tweet-short-{{ it.id }}">{{ it.tweet_text[:160] }}{% if it.tweet_text|length > 160 %}<span>… <button onclick="document.querySelector('.tweet-short-{{ it.id }}').style.display='none'; document.querySelector('.tweet-full-{{ it.id }}').style.display='block'" class="text-gray-600 hover:text-gray-400 underline">show more</button></span>{% endif %}</span>
+          {% if it.tweet_text|length > 160 %}<span class="tweet-full-{{ it.id }}" style="display:none">{{ it.tweet_text }} <button onclick="document.querySelector('.tweet-full-{{ it.id }}').style.display='none'; document.querySelector('.tweet-short-{{ it.id }}').style.display='block'" class="text-gray-600 hover:text-gray-400 underline">show less</button></span>{% endif %}
+        </p>
+      </div>
+
+      <!-- Our reply — full text -->
+      <div class="bg-gray-800 rounded-lg p-3 mb-3">
+        <p class="text-sm text-gray-100 leading-relaxed whitespace-pre-wrap">{{ it.reply }}</p>
+      </div>
+
+      <!-- Actions -->
+      <div class="flex gap-2 justify-end">
+        {% if it.status == 'pending' %}
+        <button onclick="twAction('{{ it.id }}','approve')" class="bg-green-800 hover:bg-green-700 text-green-200 text-xs rounded px-3 py-1.5 font-medium">Approve</button>
+        <button onclick="twAction('{{ it.id }}','reject')" class="bg-gray-800 hover:bg-gray-700 text-gray-400 text-xs rounded px-3 py-1.5">Reject</button>
+        {% elif it.status == 'approved' %}
+        <button onclick="copyReply(this, {{ it.reply | tojson }})" class="bg-sky-800 hover:bg-sky-700 text-sky-200 text-xs rounded px-3 py-1.5 font-medium">Copy</button>
+        <button onclick="twAction('{{ it.id }}','posted')" class="bg-gray-800 hover:bg-green-800 text-gray-300 hover:text-green-200 text-xs rounded px-3 py-1.5">Mark Posted</button>
+        <button onclick="twAction('{{ it.id }}','reject')" class="bg-gray-800 hover:bg-gray-700 text-gray-500 text-xs rounded px-3 py-1.5">Reject</button>
+        {% endif %}
+      </div>
+    </div>
+    {% endfor %}
   </div>
   {% else %}
-  <div class="bg-gray-900 rounded-xl p-6 mb-6 text-gray-600 text-sm">No replies in queue. Auto-generates every 6h.</div>
+  <div class="bg-gray-900 rounded-xl p-6 mb-6 text-gray-600 text-sm">No replies in queue.</div>
   {% endif %}
 
   <!-- Posted history -->
@@ -421,32 +401,66 @@ TEMPLATE = """
     <div class="px-4 py-3 border-b border-gray-800">
       <h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Posted ({{ posted|length }})</h3>
     </div>
-    <table class="w-full text-sm">
-      <thead>
-        <tr class="text-xs text-gray-600 border-b border-gray-800">
-          <th class="text-left px-4 py-2 w-24">Posted at</th>
-          <th class="text-left px-4 py-2 w-28">Author</th>
-          <th class="text-left px-4 py-2">Tweet</th>
-          <th class="text-left px-4 py-2">Reply</th>
-          <th class="text-right px-4 py-2 w-16">Likes</th>
-        </tr>
-      </thead>
-      <tbody class="divide-y divide-gray-800">
-        {% for it in posted|reverse %}
-        <tr class="hover:bg-gray-900">
-          <td class="px-4 py-2 text-xs text-gray-600 whitespace-nowrap">{{ (it.posted_at or '')[:10] }}</td>
-          <td class="px-4 py-2">
-            <a href="{{ it.tweet_url }}" target="_blank" class="text-xs text-gray-500 hover:text-gray-400">@{{ it.author_username }}</a>
-          </td>
-          <td class="px-4 py-2 text-xs text-gray-600 max-w-xs truncate">{{ it.tweet_text[:80] }}{% if it.tweet_text|length > 80 %}…{% endif %}</td>
-          <td class="px-4 py-2 text-xs text-gray-400 max-w-xs">{{ it.reply[:100] }}{% if it.reply|length > 100 %}…{% endif %}</td>
-          <td class="px-4 py-2 text-right text-xs text-gray-600">{{ it.likes or '—' }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+    <div class="divide-y divide-gray-800">
+      {% for it in posted|reverse %}
+      <div class="px-4 py-3">
+        <div class="flex items-center gap-3 mb-1">
+          <span class="text-xs text-gray-600">{{ (it.posted_at or '')[:10] }}</span>
+          <a href="{{ it.tweet_url }}" target="_blank" class="text-xs text-gray-500 hover:text-gray-400">@{{ it.author_username }}</a>
+          <span class="text-xs text-gray-600">{{ it.likes or '' }}{% if it.likes %} likes{% endif %}</span>
+        </div>
+        <p class="text-xs text-gray-600 mb-1">{{ it.tweet_text }}</p>
+        <p class="text-xs text-gray-400">{{ it.reply }}</p>
+      </div>
+      {% endfor %}
+    </div>
   </div>
   {% endif %}
+
+<script>
+function twAction(id, action) {
+  const card = document.getElementById('card-' + id);
+  fetch('/twitter/queue/' + id + '/' + action, {method: 'POST'})
+    .then(r => r.json())
+    .then(data => {
+      if (action === 'reject') {
+        card.style.opacity = '0';
+        card.style.transition = 'opacity 0.3s';
+        setTimeout(() => card.remove(), 300);
+      } else if (action === 'approve') {
+        card.classList.add('border', 'border-sky-800');
+        card.querySelector('.text-yellow-400').textContent = 'approved';
+        card.querySelector('.text-yellow-400').className = 'text-xs px-2 py-0.5 rounded-full bg-sky-900 text-sky-300';
+        const btns = card.querySelector('.flex.gap-2');
+        btns.innerHTML = '<button onclick="copyReply(this, ' + JSON.stringify(data.reply) + ')" class="bg-sky-800 hover:bg-sky-700 text-sky-200 text-xs rounded px-3 py-1.5 font-medium">Copy</button>'
+          + '<button onclick="twAction(\'' + id + '\',\'posted\')" class="bg-gray-800 hover:bg-green-800 text-gray-300 hover:text-green-200 text-xs rounded px-3 py-1.5">Mark Posted</button>'
+          + '<button onclick="twAction(\'' + id + '\',\'reject\')" class="bg-gray-800 hover:bg-gray-700 text-gray-500 text-xs rounded px-3 py-1.5">Reject</button>';
+        updateCounter('pending', -1); updateCounter('approved', 1);
+      } else if (action === 'posted') {
+        card.style.opacity = '0.4';
+        card.querySelector('.flex.gap-2').innerHTML = '<span class="text-xs text-green-400">Posted</span>';
+        updateCounter('approved', -1);
+      }
+    });
+}
+
+function copyReply(btn, text) {
+  navigator.clipboard.writeText(text).then(() => {
+    btn.textContent = 'Copied!';
+    setTimeout(() => btn.textContent = 'Copy', 1500);
+  });
+}
+
+function updateCounter(status, delta) {
+  const labels = {'pending': 'Pending review', 'approved': 'Ready to post'};
+  document.querySelectorAll('.text-xs.text-gray-500').forEach(el => {
+    if (el.textContent.trim() === labels[status]) {
+      const num = el.nextElementSibling;
+      if (num) num.textContent = Math.max(0, parseInt(num.textContent) + delta);
+    }
+  });
+}
+</script>
 
 </div>
 </body>
@@ -504,12 +518,15 @@ def twitter_generate_loop():
 @app.route("/twitter/queue/<item_id>/approve", methods=["POST"])
 def twitter_queue_approve(item_id):
     q = get_tw_queue()
+    reply = ""
     for it in q:
         if it["id"] == item_id:
             it["status"] = "approved"
+            reply = it.get("reply", "")
             break
     save_tw_queue(q)
-    return redirect("/")
+    from flask import jsonify
+    return jsonify({"ok": True, "reply": reply})
 
 
 @app.route("/twitter/queue/<item_id>/reject", methods=["POST"])
@@ -520,7 +537,8 @@ def twitter_queue_reject(item_id):
             it["status"] = "rejected"
             break
     save_tw_queue(q)
-    return redirect("/")
+    from flask import jsonify
+    return jsonify({"ok": True})
 
 
 @app.route("/twitter/queue/<item_id>/posted", methods=["POST"])
@@ -533,7 +551,8 @@ def twitter_queue_posted(item_id):
             log_tw_reply(it["author"], it["tweet_url"], it["tweet_text"], it["reply"])
             break
     save_tw_queue(q)
-    return redirect("/")
+    from flask import jsonify
+    return jsonify({"ok": True})
 
 
 @app.route("/settings", methods=["POST"])
