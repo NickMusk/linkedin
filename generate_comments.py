@@ -1,9 +1,55 @@
 import re
+import json
+import os
 import anthropic
-from config import ANTHROPIC_API_KEY
+from config import ANTHROPIC_API_KEY, DATA_DIR
 from knowledge_base import build_context
 
 _client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+
+REWRITE_PROMPT = """You are a style editor for LinkedIn comments. Your only job is to vary the sentence structure and opening format of a comment while preserving every insight and word choice.
+
+Rules:
+- Keep the exact same observation, argument, or counter-point. Do not add or remove ideas.
+- Change ONLY the sentence structure and how it opens.
+- If the comment starts with "The [X]...", restructure it so it doesn't.
+- Do not start with the same opening word or pattern as any comment in the RECENT list.
+- No dashes or em-dashes (use comma or period instead).
+- No emojis. :) and ;) are allowed if the original had them.
+- Output ONLY the rewritten comment. No explanation, no preamble."""
+
+
+def _load_recent_comments(n=5) -> list[str]:
+    path = os.path.join(DATA_DIR, "comments_log.json")
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path) as f:
+            entries = json.load(f)
+        return [e["comment"] for e in entries[-n:] if e.get("comment")]
+    except Exception:
+        return []
+
+
+def _rewrite_one(draft: str, recent: list[str]) -> str:
+    recent_block = "\n".join(f"- {c[:120]}" for c in recent) if recent else "(none)"
+    try:
+        resp = _client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=300,
+            system=REWRITE_PROMPT,
+            messages=[{
+                "role": "user",
+                "content": (
+                    f"RECENT COMMENTS (avoid these opening styles):\n{recent_block}\n\n"
+                    f"COMMENT TO REWRITE:\n{draft}"
+                ),
+            }],
+        )
+        return _strip_dashes(resp.content[0].text.strip())
+    except Exception as e:
+        print(f"  [rewrite error] {e}")
+        return draft
 
 SYSTEM_PROMPT = """You are Nick Nagatkin's LinkedIn comment writer.
 
@@ -64,6 +110,7 @@ HARD rules:
 
 def generate_comments(posts: list[dict], kb_context: str) -> list[dict]:
     results = []
+    recent_comments = _load_recent_comments(5)
 
     # Cache the knowledge base context across all calls
     cached_kb = [
@@ -78,6 +125,12 @@ def generate_comments(posts: list[dict], kb_context: str) -> list[dict]:
         print(f"  Generating comment {i+1}/{len(posts)}: {post['author'][:30]}")
         draft, reasoning = _generate_one(post, cached_kb)
         skip = "SKIP" in draft.strip().upper().split() or draft.strip().upper() == "SKIP"
+
+        if not skip:
+            print(f"    Rewriting...")
+            draft = _rewrite_one(draft, recent_comments)
+            recent_comments = (recent_comments + [draft])[-5:]
+
         results.append({**post, "draft": draft, "reasoning": reasoning, "skip": skip})
 
     return results
