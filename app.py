@@ -218,7 +218,7 @@ TEMPLATE = """
 <div class="max-w-5xl mx-auto">
 
   <div class="flex items-center justify-between mb-8">
-    <h1 class="text-2xl font-bold">Commenter Dashboard</h1>
+    <h1 class="text-2xl font-bold">Commenter Dashboard <a href="/viral-posts" class="text-sm font-normal text-gray-500 hover:text-blue-400 ml-3">Viral Posts DB →</a></h1>
     <div class="flex items-center gap-4">
       <div class="flex items-center gap-2">
         <span class="w-2.5 h-2.5 rounded-full {% if api_ok %}bg-green-400{% else %}bg-red-500 animate-pulse{% endif %}"></span>
@@ -594,6 +594,64 @@ def save_tw_settings():
     return redirect("/")
 
 
+@app.route("/viral-posts")
+def viral_posts():
+    import json as _json
+    path = os.path.join(DATA_DIR, "viral_posts_db.json")
+    db = load_json(path, [])
+    return render_template_string(VIRAL_TEMPLATE, posts=db, fmt=fmt_time)
+
+
+VIRAL_TEMPLATE = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Viral Posts DB</title>
+<script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-950 text-gray-100 min-h-screen p-6 font-sans">
+<div class="max-w-4xl mx-auto">
+  <div class="flex items-center justify-between mb-8">
+    <h1 class="text-2xl font-bold">Viral Posts Database</h1>
+    <div class="flex items-center gap-4">
+      <span class="text-xs text-gray-500">{{ posts|length }} posts · sorted by engagement</span>
+      <a href="/" class="text-xs text-blue-400 hover:text-blue-300">← Dashboard</a>
+    </div>
+  </div>
+
+  {% if not posts %}
+  <div class="text-gray-600">No posts yet. They appear here after the first successful comment session.</div>
+  {% else %}
+  <div class="space-y-6">
+    {% for p in posts %}
+    <div class="bg-gray-900 rounded-xl p-5">
+      <div class="flex items-center gap-3 mb-3">
+        <a href="{{ p.url }}" target="_blank" class="text-blue-400 hover:text-blue-300 font-semibold text-sm">{{ p.author }}</a>
+        {% if p.author_title %}
+        <span class="text-xs text-gray-500 truncate max-w-sm">{{ p.author_title }}</span>
+        {% endif %}
+        <span class="ml-auto flex items-center gap-3 text-xs text-gray-500 whitespace-nowrap">
+          <span>{{ p.likes }} likes</span>
+          <span>{{ p.comments }} comments</span>
+          <span class="text-gray-600">{{ fmt(p.saved_at) }}</span>
+        </span>
+      </div>
+      <p class="text-sm text-gray-300 leading-relaxed mb-4 whitespace-pre-wrap">{{ p.text }}</p>
+      <div class="border-l-2 border-blue-800 pl-3">
+        <div class="text-xs text-gray-500 mb-1">Our comment</div>
+        <p class="text-sm text-gray-400">{{ p.our_comment }}</p>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+</div>
+</body>
+</html>
+"""
+
+
 # ── LinkedIn autonomous loop ───────────────────────────────────────────────
 
 def update_status(**kwargs):
@@ -629,6 +687,7 @@ def run_linkedin_session(s):
     from generate_comments import generate_comments
     from publish import _extract_activity_id, _get_social_id, _post_comment
     from fetch_posts import mark_url_published
+    from knowledge_base import save_viral_post
     from config import PUBLISH_DELAY_MIN, PUBLISH_DELAY_MAX
     import json as _json
 
@@ -690,6 +749,7 @@ def run_linkedin_session(s):
             save_example(item.get("text", url), text)
             log_comment(author, url, item.get("text", ""), text)
             mark_url_published(url)
+            save_viral_post(item, text)
             published += 1
         else:
             log.warning(f"    Failed: {detail}")

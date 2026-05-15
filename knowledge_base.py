@@ -1,4 +1,6 @@
 import os
+import json
+from datetime import datetime, timezone
 from config import DATA_DIR
 
 KB_PATH = os.path.join(os.path.dirname(__file__), "nick_interview.md")
@@ -32,7 +34,42 @@ def save_example(post_excerpt: str, comment: str):
         f.write(entry)
 
 
+VIRAL_POSTS_PATH = os.path.join(DATA_DIR, "viral_posts_db.json")
 TWEET_EXAMPLES_PATH = os.path.join(DATA_DIR, "tweet_examples.md")
+
+
+def save_viral_post(post: dict, our_comment: str):
+    """Save a high-engagement LinkedIn post we commented on to the viral posts DB."""
+    if os.path.exists(VIRAL_POSTS_PATH):
+        try:
+            with open(VIRAL_POSTS_PATH) as f:
+                db = json.load(f)
+        except Exception:
+            db = []
+    else:
+        db = []
+
+    existing_urls = {e["url"] for e in db}
+    if post["url"] in existing_urls:
+        return
+
+    db.append({
+        "url": post["url"],
+        "author": post.get("author", ""),
+        "author_title": post.get("author_title", ""),
+        "text": post.get("text", ""),
+        "likes": post.get("likes", 0),
+        "comments": post.get("comments", 0),
+        "engagement_score": post.get("engagement_score", 0),
+        "posted_at": post.get("posted_at", ""),
+        "saved_at": datetime.now(timezone.utc).isoformat(),
+        "our_comment": our_comment,
+    })
+
+    db.sort(key=lambda e: e.get("engagement_score", 0), reverse=True)
+
+    with open(VIRAL_POSTS_PATH, "w") as f:
+        json.dump(db, f, ensure_ascii=False, indent=2)
 
 
 def save_tweet_example(tweet_text: str, reply: str):
