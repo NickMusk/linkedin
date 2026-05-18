@@ -190,6 +190,8 @@ def _strip_dashes(text: str) -> str:
     # Clean up any doubled commas or comma after opening
     text = re.sub(r',\s*,', ',', text)
     text = re.sub(r'^\s*,\s*', '', text)
+    # Remove period before emoticons
+    text = re.sub(r'\.\s*([;:]\))', r' \1', text)
     # Remove trailing period from each paragraph
     text = re.sub(r'\.\s*$', '', text, flags=re.MULTILINE)
     return text.strip()

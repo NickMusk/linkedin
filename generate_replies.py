@@ -80,4 +80,7 @@ def _strip_dashes(text: str) -> str:
     text = re.sub(r'(?<=[a-zA-Z])-(?=[a-zA-Z])', ' ', text)
     text = re.sub(r',\s*,', ',', text)
     text = re.sub(r'^\s*,\s*', '', text)
+    # Remove period before emoticons and at end of line
+    text = re.sub(r'\.\s*([;:]\))', r' \1', text)
+    text = re.sub(r'\.\s*$', '', text, flags=re.MULTILINE)
     return text.strip()
