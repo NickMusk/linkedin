@@ -31,7 +31,9 @@ _PREV_DEFAULTS = {
     "max_per_day": 18, "max_per_session": 6, "active_start": 8, "active_end": 21,
     "gap_min": 150, "gap_max": 240,
     "tw_max_per_day": 20, "tw_max_per_session": 8, "tw_gap_min": 240, "tw_gap_max": 480,
+    "tw_max_per_day": 50, "tw_max_per_session": 15, "tw_gap_min": 45, "tw_gap_max": 120,
     "tw_reply_delay_min": 180, "tw_reply_delay_max": 240,
+    "tw_reply_delay_min": 120, "tw_reply_delay_max": 360,
 }
 
 DEFAULT_SETTINGS = {
@@ -42,13 +44,13 @@ DEFAULT_SETTINGS = {
     "active_end":      24,
     "gap_min":         45,
     "gap_max":        120,
-    # Twitter — 24/7, randomised gaps 45–120 min
-    "tw_max_per_day":       50,
-    "tw_max_per_session":   15,
-    "tw_gap_min":           45,
-    "tw_gap_max":          120,
-    "tw_reply_delay_min":  120,
-    "tw_reply_delay_max":  360,
+    # Twitter — 3/day, 1/session, gaps 3–4h
+    "tw_max_per_day":      3,
+    "tw_max_per_session":  1,
+    "tw_gap_min":        180,
+    "tw_gap_max":        240,
+    "tw_reply_delay_min":  60,
+    "tw_reply_delay_max": 120,
 }
 
 app = Flask(__name__)
@@ -895,7 +897,7 @@ def twitter_loop():
 
 if __name__ == "__main__":
     threading.Thread(target=linkedin_loop, daemon=True, name="linkedin").start()
-    threading.Thread(target=twitter_generate_loop, daemon=True, name="twitter-gen").start()
+    threading.Thread(target=twitter_loop, daemon=True, name="twitter").start()
 
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port)
