@@ -60,6 +60,40 @@ def _extract_text(node) -> str:
     return ""
 
 
+def _detect_content_type(el: dict) -> str:
+    """Return content type: image, document, video, article, or text."""
+    content = el.get("content") or {}
+    if content.get("imageComponent"):
+        return "image"
+    if content.get("documentComponent"):
+        return "document"
+    if content.get("linkedInVideoComponent") or content.get("externalVideoComponent"):
+        return "video"
+    if content.get("articleComponent"):
+        return "article"
+    return "text"
+
+
+def _fetch_attachment_url(activity_id: str) -> str:
+    """Fetch image URL for a post via Unipile's native post endpoint."""
+    try:
+        resp = requests.get(
+            f"{UNIPILE_DSN}/api/v1/posts/{activity_id}",
+            headers={"X-API-KEY": UNIPILE_API_KEY},
+            params={"account_id": UNIPILE_ACCOUNT_ID},
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            return ""
+        attachments = resp.json().get("attachments", [])
+        for att in attachments:
+            if att.get("type") == "img" and att.get("url") and not att.get("unavailable"):
+                return att["url"]
+    except Exception:
+        pass
+    return ""
+
+
 def _normalize(el: dict):
     commentary = el.get("commentary") or {}
     text = _extract_text(commentary.get("text") or {})
@@ -103,6 +137,8 @@ def _normalize(el: dict):
         "posted_at": posted_at,
         "engagement_score": engagement_score,
         "hashtags": [],
+        "content_type": _detect_content_type(el),
+        "image_url": "",
         "source": "feed",
     }
 
@@ -150,7 +186,25 @@ def fetch_feed_posts(target: int = 30) -> list[dict]:
             break
     # Sort by engagement score descending so best posts get commented on first
     posts.sort(key=lambda p: p.get("engagement_score", 0), reverse=True)
-    return posts[:target]
+    posts = posts[:target]
+
+    # Enrich top image posts with accessible image URLs (top 10 only to limit API calls)
+    import re as _re
+    enriched = 0
+    for post in posts[:10]:
+        if post.get("content_type") != "image":
+            continue
+        m = _re.search(r"activity[:\-](\d+)", post["url"])
+        if not m:
+            continue
+        img_url = _fetch_attachment_url(m.group(1))
+        if img_url:
+            post["image_url"] = img_url
+            enriched += 1
+    if enriched:
+        print(f"  Enriched {enriched} posts with image URLs")
+
+    return posts
 
 
 def fetch_all_posts() -> list[dict]:

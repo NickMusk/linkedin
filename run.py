@@ -203,6 +203,12 @@ def cmd_full():
 
     _save_to_engagement_db(posts, "linkedin")
 
+    try:
+        from analyze_viral_posts import run_analysis
+        run_analysis()
+    except Exception as e:
+        print(f"  Viral pattern analysis failed: {e}")
+
     print("Generating comments...")
     items = generate_comments(posts, kb)
 
@@ -237,21 +243,35 @@ def cmd_draft_posts():
     from report import find_latest_session
     from knowledge_base import build_context
     from generate_posts import generate_post_drafts, extract_trending_topics
+    from config import DATA_DIR
     from datetime import datetime
     import json
 
-    d = find_latest_session()
-    if not d:
-        print("No session found. Run 'fetch' first.")
-        return
+    # Find session with posts.json (walk backwards)
+    d = None
+    from report import find_latest_session
+    from pathlib import Path
+    reports_dir = os.path.join(DATA_DIR, "reports")
+    sessions = sorted([s for s in Path(reports_dir).iterdir() if s.is_dir()], reverse=True)
+    for s in sessions:
+        if os.path.exists(os.path.join(str(s), "posts.json")):
+            d = str(s)
+            break
 
-    raw_json = os.path.join(d, "posts.json")
-    if not os.path.exists(raw_json):
-        print("No posts.json found. Run 'fetch' first.")
+    # Fall back to viral_posts_db.json if no session posts available
+    viral_db = os.path.join(DATA_DIR, "viral_posts_db.json")
+    if d:
+        with open(os.path.join(d, "posts.json")) as f:
+            posts = json.load(f)
+    elif os.path.exists(viral_db):
+        print("No recent session posts — using viral_posts_db.json for topics.")
+        with open(viral_db) as f:
+            posts = json.load(f)
+        d = sessions[0] if sessions else DATA_DIR
+        d = str(d)
+    else:
+        print("No posts found. Run 'fetch' first.")
         return
-
-    with open(raw_json) as f:
-        posts = json.load(f)
 
     print("Extracting trending topics...")
     topics = extract_trending_topics(posts)
@@ -326,22 +346,36 @@ def cmd_tweets():
     from datetime import datetime
     import json
 
-    # Save approved replies from previous session to KB
+    # Save approved replies from previous session to KB + viral tweets DB
     from report import find_latest_session
+    from analyze_viral_tweets import save_viral_tweet, run as run_tweet_analysis
     prev = find_latest_session()
     if prev:
         prev_replies = os.path.join(prev, "replies.md")
+        prev_tweets_json = os.path.join(prev, "tweets.json")
         if os.path.exists(prev_replies):
             import re as _re
             with open(prev_replies) as f:
                 content = f.read()
+            # Load tweet objects for metadata
+            prev_tweets_map = {}
+            if os.path.exists(prev_tweets_json):
+                with open(prev_tweets_json) as f:
+                    prev_tweets_list = json.load(f)
+                prev_tweets_map = {t["url"]: t for t in prev_tweets_list}
+
             for block in content.split("\n---\n"):
                 if "**STATUS:** approved" not in block:
                     continue
+                url_m = _re.search(r"\*\*URL:\*\* (.+)", block)
                 tweet_m = _re.search(r"> (.+)", block)
                 reply_m = _re.search(r"```\n([\s\S]+?)\n```", block)
                 if tweet_m and reply_m:
                     save_tweet_example(tweet_m.group(1).strip(), reply_m.group(1).strip())
+                if url_m and reply_m:
+                    url = url_m.group(1).strip()
+                    tweet_obj = prev_tweets_map.get(url, {"url": url})
+                    save_viral_tweet(tweet_obj, reply_m.group(1).strip())
 
     print("Fetching tweets...")
     tweets = fetch_tweets()
@@ -389,8 +423,10 @@ def cmd_tweets():
     real = sum(1 for i in items if not i.get("skip"))
     print(f"\n✓ {real} reply drafts → {path}")
 
-    real = sum(1 for i in items if not i.get("skip"))
-    print(f"\n✓ {real} reply drafts → {path}")
+    try:
+        run_tweet_analysis()
+    except Exception as e:
+        print(f"  Tweet pattern analysis failed: {e}")
 
 
 COMMANDS = {

@@ -144,6 +144,11 @@ def run_twitter_session(settings: dict, log_fn=None, update_status_fn=None) -> i
         if ok:
             log.info(f"    OK: {detail}")
             save_tweet_example(item.get("text", ""), item["draft"])
+            try:
+                from analyze_viral_tweets import save_viral_tweet
+                save_viral_tweet(item, item["draft"])
+            except Exception:
+                pass
             if log_fn:
                 log_fn(
                     author=item.get("author", "?"),
@@ -161,6 +166,14 @@ def run_twitter_session(settings: dict, log_fn=None, update_status_fn=None) -> i
             time.sleep(delay)
 
     log.info(f"Twitter session done: {posted}/{len(to_post)} posted.")
+
+    if posted > 0:
+        try:
+            from analyze_viral_tweets import run as run_tweet_analysis
+            run_tweet_analysis()
+        except Exception as e:
+            log.warning(f"  Tweet pattern analysis failed: {e}")
+
     if update_status_fn:
         update_status_fn(state="sleeping")
     return posted

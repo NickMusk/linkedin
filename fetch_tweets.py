@@ -91,6 +91,33 @@ def fetch_tweets() -> list[dict]:
     return tweets
 
 
+def _extract_media(item: dict) -> tuple[str, str]:
+    """Return (image_url, content_type) from raw Apify tweet item."""
+    media_list = item.get("media") or []
+    ext = (item.get("extendedEntities") or {}).get("media") or []
+
+    # Check extended entities for type info
+    for m in ext:
+        mtype = m.get("type", "")
+        url = m.get("media_url_https", "")
+        if mtype == "photo" and url:
+            return url + "?format=jpg&name=medium", "image"
+        if mtype in ("video", "animated_gif") and url:
+            return url, "video"
+
+    # Fallback to simple media array
+    for url in media_list:
+        if isinstance(url, str) and url:
+            ctype = "video" if "video_thumb" in url else "image"
+            return url, ctype
+
+    # Check for article/card
+    if item.get("card"):
+        return "", "article"
+
+    return "", "text"
+
+
 def _normalize(item: dict, keyword: str) -> dict:
     author = item.get("author") or {}
     if isinstance(author, dict):
@@ -99,6 +126,8 @@ def _normalize(item: dict, keyword: str) -> dict:
     else:
         author_name = item.get("authorName", "Unknown")
         author_username = item.get("authorUsername", "")
+
+    image_url, content_type = _extract_media(item)
 
     return {
         "url": item.get("url") or item.get("tweetUrl", ""),
@@ -110,5 +139,7 @@ def _normalize(item: dict, keyword: str) -> dict:
         "replies": item.get("replyCount", 0),
         "retweets": item.get("retweetCount", 0),
         "posted_at": item.get("createdAt") or item.get("created_at", ""),
+        "content_type": content_type,
+        "image_url": image_url,
         "source": f"keyword:{keyword}",
     }

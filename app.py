@@ -220,7 +220,7 @@ TEMPLATE = """
 <div class="max-w-5xl mx-auto">
 
   <div class="flex items-center justify-between mb-8">
-    <h1 class="text-2xl font-bold">Commenter Dashboard <a href="/viral-posts" class="text-sm font-normal text-gray-500 hover:text-blue-400 ml-3">Viral Posts DB →</a></h1>
+    <h1 class="text-2xl font-bold">Commenter Dashboard <a href="/viral-posts" class="text-sm font-normal text-gray-500 hover:text-blue-400 ml-3">Viral Posts DB →</a> <a href="/stats" class="text-sm font-normal text-gray-500 hover:text-blue-400 ml-3">Stats →</a></h1>
     <div class="flex items-center gap-4">
       <div class="flex items-center gap-2">
         <span class="w-2.5 h-2.5 rounded-full {% if api_ok %}bg-green-400{% else %}bg-red-500 animate-pulse{% endif %}"></span>
@@ -654,6 +654,132 @@ VIRAL_TEMPLATE = """<!DOCTYPE html>
 """
 
 
+@app.route("/stats")
+def stats():
+    import json as _json
+    from datetime import datetime, timezone, timedelta
+
+    now = datetime.now(timezone.utc)
+
+    def _week_counts(log_path, date_field, text_field):
+        entries = load_json(log_path, [])
+        buckets = {}
+        total_7d = 0
+        for e in entries:
+            raw = e.get(date_field, "")
+            if not raw:
+                continue
+            try:
+                dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            except Exception:
+                continue
+            age = (now - dt).days
+            if age > 28:
+                continue
+            week_label = f"Week -{age // 7}" if age >= 7 else "This week"
+            buckets.setdefault(week_label, []).append(e.get(text_field, "")[:80])
+            if age < 7:
+                total_7d += 1
+        return total_7d, buckets
+
+    tw_7d, tw_buckets = _week_counts(TW_LOG, "posted_at", "reply")
+    li_7d, li_buckets = _week_counts(COMMENTS_LOG, "posted_at", "comment")
+
+    tw_log = load_json(TW_LOG, [])
+    li_log = load_json(COMMENTS_LOG, [])
+
+    return render_template_string(STATS_TEMPLATE,
+        tw_log=tw_log, li_log=li_log,
+        tw_7d=tw_7d, li_7d=li_7d,
+        tw_buckets=tw_buckets, li_buckets=li_buckets,
+        now=now, fmt=fmt_time)
+
+
+STATS_TEMPLATE = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Activity Stats</title>
+<script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-950 text-gray-100 min-h-screen p-6 font-sans">
+<div class="max-w-3xl mx-auto">
+  <div class="flex items-center justify-between mb-8">
+    <h1 class="text-2xl font-bold">Activity Stats</h1>
+    <a href="/" class="text-xs text-blue-400 hover:text-blue-300">← Dashboard</a>
+  </div>
+
+  <!-- Summary cards -->
+  <div class="grid grid-cols-2 gap-4 mb-10">
+    <div class="bg-gray-900 rounded-xl p-5">
+      <div class="text-xs text-gray-500 mb-1">Twitter replies · last 7 days</div>
+      <div class="text-4xl font-bold text-blue-400">{{ tw_7d }}</div>
+      <div class="text-xs text-gray-600 mt-1">{{ tw_log|length }} total all time</div>
+    </div>
+    <div class="bg-gray-900 rounded-xl p-5">
+      <div class="text-xs text-gray-500 mb-1">LinkedIn comments · last 7 days</div>
+      <div class="text-4xl font-bold text-blue-400">{{ li_7d }}</div>
+      <div class="text-xs text-gray-600 mt-1">{{ li_log|length }} total all time</div>
+    </div>
+  </div>
+
+  <!-- Twitter by week -->
+  <div class="mb-8">
+    <h2 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">Twitter · by week</h2>
+    {% for week, entries in tw_buckets.items()|sort %}
+    <div class="mb-4">
+      <div class="text-xs text-gray-500 mb-2">{{ week }} — {{ entries|length }} replies</div>
+      <div class="space-y-1">
+        {% for e in entries %}
+        <div class="text-xs text-gray-400 bg-gray-900 rounded px-3 py-1 truncate">{{ e }}</div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endfor %}
+    {% if not tw_buckets %}<div class="text-gray-600 text-sm">No data yet.</div>{% endif %}
+  </div>
+
+  <!-- LinkedIn by week -->
+  <div class="mb-8">
+    <h2 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">LinkedIn · by week</h2>
+    {% for week, entries in li_buckets.items()|sort %}
+    <div class="mb-4">
+      <div class="text-xs text-gray-500 mb-2">{{ week }} — {{ entries|length }} comments</div>
+      <div class="space-y-1">
+        {% for e in entries %}
+        <div class="text-xs text-gray-400 bg-gray-900 rounded px-3 py-1 truncate">{{ e }}</div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endfor %}
+    {% if not li_buckets %}<div class="text-gray-600 text-sm">No data yet.</div>{% endif %}
+  </div>
+
+  <!-- Recent Twitter replies -->
+  <div>
+    <h2 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">Last 10 Twitter replies</h2>
+    <div class="space-y-3">
+    {% for e in tw_log[-10:]|reverse %}
+    <div class="bg-gray-900 rounded-xl p-4">
+      <div class="flex items-center justify-between mb-2">
+        <span class="text-xs font-semibold text-blue-400">{{ e.get('author','?') }}</span>
+        <span class="text-xs text-gray-600">{{ fmt(e.get('posted_at','')) }}</span>
+      </div>
+      <p class="text-xs text-gray-500 mb-2 truncate">{{ e.get('tweet_text','')[:120] }}</p>
+      <p class="text-sm text-gray-200">{{ e.get('reply','') }}</p>
+    </div>
+    {% endfor %}
+    {% if not tw_log %}<div class="text-gray-600 text-sm">No replies logged yet.</div>{% endif %}
+    </div>
+  </div>
+
+</div>
+</body>
+</html>
+"""
+
+
 # ── LinkedIn autonomous loop ───────────────────────────────────────────────
 
 def update_status(**kwargs):
@@ -766,6 +892,20 @@ def run_linkedin_session(s):
     prev = st2.get("today_count", 0) if st2.get("date") == today2 else 0
     update_status(today_count=prev + published, state="sleeping")
     log.info(f"LinkedIn session done: {published}/{len(publishable)} posted.")
+
+    if published > 0:
+        try:
+            from analyze_viral_posts import run_analysis
+            run_analysis()
+        except Exception as e:
+            log.warning(f"  Viral pattern analysis failed: {e}")
+
+        try:
+            from track_own_posts import run as track_own
+            track_own(silent=True)
+        except Exception as e:
+            log.warning(f"  Own post tracking failed: {e}")
+
     return published
 
 

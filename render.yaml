@@ -25,5 +25,7 @@ services:
         sync: false
       - key: LINKEDIN_LI_AT
         sync: false
+      - key: LINKEDIN_PROFILE_ID
+        sync: false
       - key: DATA_DIR
         value: /data

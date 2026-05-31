@@ -53,13 +53,48 @@ No other text before or after.
 def generate_post_drafts(trending_topics: list[str], kb_context: str) -> list[str]:
     topics_text = "\n".join(f"- {t}" for t in trending_topics)
 
+    try:
+        from analyze_viral_posts import load_patterns_for_prompt
+        viral_patterns = load_patterns_for_prompt()
+    except Exception:
+        viral_patterns = ""
+
+    try:
+        from track_own_posts import load_own_posts_for_prompt
+        own_posts_context = load_own_posts_for_prompt()
+    except Exception:
+        own_posts_context = ""
+
+    kb_text = f"# Nick's Knowledge Base\n\n{kb_context}"
+    if viral_patterns:
+        kb_text += f"\n\n---\n\n{viral_patterns}"
+    if own_posts_context:
+        kb_text += f"\n\n---\n\n{own_posts_context}"
+
     cached_kb = [
         {
             "type": "text",
-            "text": f"# Nick's Knowledge Base\n\n{kb_context}",
+            "text": kb_text,
             "cache_control": {"type": "ephemeral"},
         }
     ]
+
+    user_text = (
+        f"Trending topics in Nick's LinkedIn feed right now:\n{topics_text}\n\n"
+        f"Write 3 LinkedIn post drafts for Nick. Draw on his real experience from the knowledge base. "
+        f"Each post should feel like something only he could write, not generic founder content."
+    )
+    if viral_patterns:
+        user_text += (
+            "\n\nPrimary signal: use the viral patterns section to choose format and hook — "
+            "these are proven in his feed. Nick's account is small, so don't optimize for "
+            "what he has done before, optimize for what performs broadly."
+        )
+    if own_posts_context:
+        user_text += (
+            "\n\nNick's own posts are included only for voice calibration — "
+            "match his tone and phrasing, not his engagement numbers."
+        )
 
     response = _client.messages.create(
         model="claude-sonnet-4-6",
@@ -71,11 +106,7 @@ def generate_post_drafts(trending_topics: list[str], kb_context: str) -> list[st
                 "content": cached_kb + [
                     {
                         "type": "text",
-                        "text": (
-                            f"Trending topics in Nick's LinkedIn feed right now:\n{topics_text}\n\n"
-                            f"Write 3 LinkedIn post drafts for Nick. Draw on his real experience from the knowledge base. "
-                            f"Each post should feel like something only he could write, not generic founder content."
-                        ),
+                        "text": user_text,
                     }
                 ],
             }

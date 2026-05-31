@@ -16,6 +16,9 @@ UNIPILE_ACCOUNT_ID = os.environ["UNIPILE_ACCOUNT_ID"]
 TWITTER_AUTH_TOKEN = os.environ["TWITTER_AUTH_TOKEN"]
 TWITTER_CT0 = os.environ["TWITTER_CT0"]
 
+# LinkedIn profile identifier for fetching own posts (e.g. "ACoAA...")
+LINKEDIN_PROFILE_ID = os.getenv("LINKEDIN_PROFILE_ID", "")
+
 # Minimum likes for a post to be included
 MIN_LIKES = 50
 

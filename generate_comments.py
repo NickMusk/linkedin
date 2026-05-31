@@ -136,38 +136,68 @@ def generate_comments(posts: list[dict], kb_context: str) -> list[dict]:
     return results
 
 
+def _build_image_content(image_url: str) -> list:
+    """Return vision content block if image_url is valid, else empty list."""
+    if not image_url:
+        return []
+    try:
+        import requests as _req
+        r = _req.get(image_url, timeout=8)
+        if r.status_code != 200 or not r.content:
+            return []
+        import base64
+        media_type = r.headers.get("content-type", "image/jpeg").split(";")[0].strip()
+        b64 = base64.standard_b64encode(r.content).decode("utf-8")
+        return [{"type": "image", "source": {"type": "base64", "media_type": media_type, "data": b64}}]
+    except Exception:
+        return []
+
+
 def _generate_one(post: dict, cached_kb: list) -> tuple[str, str]:
     score = post.get("engagement_score", post["likes"] + 3 * post["comments"])
     posted_at = post.get("posted_at", "")
     age_note = f" | Posted: {posted_at[:16].replace('T', ' ')} UTC" if posted_at else ""
+    content_type = post.get("content_type", "text")
     post_block = (
         f"Author: {post['author']} — {post['author_title']}\n"
         f"Likes: {post['likes']} | Comments: {post['comments']} | Engagement score: {score}{age_note}\n"
+        f"Content type: {content_type}\n"
         f"URL: {post['url']}\n\n"
         f"{post['text']}"
     )
+
+    user_content = cached_kb[:]
+    image_url = post.get("image_url", "")
+    image_blocks = _build_image_content(image_url) if image_url else []
+    if image_blocks:
+        user_content += image_blocks
+        user_content.append({
+            "type": "text",
+            "text": (
+                f"The image above is attached to this post. Use it to make the comment more specific if relevant.\n\n"
+                f"Write a LinkedIn comment for this post. "
+                f"Then on a new line starting with 'REASONING:' explain in 1-2 sentences "
+                f"which specific experience/quote from the knowledge base you drew on and why.\n\n"
+                f"POST:\n{post_block}"
+            ),
+        })
+    else:
+        user_content.append({
+            "type": "text",
+            "text": (
+                f"Write a LinkedIn comment for this post. "
+                f"Then on a new line starting with 'REASONING:' explain in 1-2 sentences "
+                f"which specific experience/quote from the knowledge base you drew on and why.\n\n"
+                f"POST:\n{post_block}"
+            ),
+        })
 
     try:
         response = _client.messages.create(
             model="claude-sonnet-4-6",
             max_tokens=800,
             system=SYSTEM_PROMPT,
-            messages=[
-                {
-                    "role": "user",
-                    "content": cached_kb + [
-                        {
-                            "type": "text",
-                            "text": (
-                                f"Write a LinkedIn comment for this post. "
-                                f"Then on a new line starting with 'REASONING:' explain in 1-2 sentences "
-                                f"which specific experience/quote from the knowledge base you drew on and why.\n\n"
-                                f"POST:\n{post_block}"
-                            ),
-                        }
-                    ],
-                }
-            ],
+            messages=[{"role": "user", "content": user_content}],
         )
     except Exception as e:
         print(f"  [API error] {e}")
