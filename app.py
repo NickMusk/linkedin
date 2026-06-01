@@ -661,12 +661,16 @@ def stats():
 
     now = datetime.now(timezone.utc)
 
-    def _week_counts(log_path, date_field, text_field):
+    def _week_counts(log_path, date_fields, text_fields):
         entries = load_json(log_path, [])
         buckets = {}
         total_7d = 0
         for e in entries:
-            raw = e.get(date_field, "")
+            raw = ""
+            for f in (date_fields if isinstance(date_fields, list) else [date_fields]):
+                raw = e.get(f, "")
+                if raw:
+                    break
             if not raw:
                 continue
             try:
@@ -677,13 +681,18 @@ def stats():
             if age > 28:
                 continue
             week_label = f"Week -{age // 7}" if age >= 7 else "This week"
-            buckets.setdefault(week_label, []).append(e.get(text_field, "")[:80])
+            text = ""
+            for f in (text_fields if isinstance(text_fields, list) else [text_fields]):
+                text = e.get(f, "")
+                if text:
+                    break
+            buckets.setdefault(week_label, []).append(text[:80])
             if age < 7:
                 total_7d += 1
         return total_7d, buckets
 
-    tw_7d, tw_buckets = _week_counts(TW_LOG, "posted_at", "reply")
-    li_7d, li_buckets = _week_counts(COMMENTS_LOG, "posted_at", "comment")
+    tw_7d, tw_buckets = _week_counts(TW_LOG, ["posted_at", "ts"], "reply")
+    li_7d, li_buckets = _week_counts(COMMENTS_LOG, ["posted_at", "ts"], "comment")
 
     tw_log = load_json(TW_LOG, [])
     li_log = load_json(COMMENTS_LOG, [])
@@ -764,9 +773,9 @@ STATS_TEMPLATE = """<!DOCTYPE html>
     <div class="bg-gray-900 rounded-xl p-4">
       <div class="flex items-center justify-between mb-2">
         <span class="text-xs font-semibold text-blue-400">{{ e.get('author','?') }}</span>
-        <span class="text-xs text-gray-600">{{ fmt(e.get('posted_at','')) }}</span>
+        <span class="text-xs text-gray-600">{{ fmt(e.get('posted_at') or e.get('ts','')) }}</span>
       </div>
-      <p class="text-xs text-gray-500 mb-2 truncate">{{ e.get('tweet_text','')[:120] }}</p>
+      <p class="text-xs text-gray-500 mb-2 truncate">{{ (e.get('tweet_text') or e.get('excerpt',''))[:120] }}</p>
       <p class="text-sm text-gray-200">{{ e.get('reply','') }}</p>
     </div>
     {% endfor %}
