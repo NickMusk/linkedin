@@ -329,25 +329,38 @@ TEMPLATE = """
   </div>
 
   <!-- ── Twitter ── -->
-  <h2 class="text-xs font-semibold text-sky-400 uppercase tracking-widest mb-3">Twitter / X — Manual Queue</h2>
+  <h2 class="text-xs font-semibold text-sky-400 uppercase tracking-widest mb-3">Twitter / X</h2>
 
-  <!-- Stats -->
-  <div class="grid grid-cols-3 gap-4 mb-6">
+  <!-- Auto-loop status -->
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
     <div class="bg-gray-900 rounded-xl p-4">
-      <div class="text-xs text-gray-500 mb-1">Posted today</div>
-      <div class="text-3xl font-bold {% if tw_posted_today >= 5 %}text-red-400{% elif tw_posted_today >= 3 %}text-yellow-400{% else %}text-green-400{% endif %}">
-        {{ tw_posted_today }}<span class="text-lg text-gray-500">/5</span>
+      <div class="text-xs text-gray-500 mb-1">Posted today (auto)</div>
+      <div class="text-3xl font-bold {% if tw.today_count >= settings.tw_max_per_day %}text-red-400{% else %}text-green-400{% endif %}">
+        {{ tw.today_count }}<span class="text-lg text-gray-500">/{{ settings.tw_max_per_day }}</span>
       </div>
     </div>
     <div class="bg-gray-900 rounded-xl p-4">
-      <div class="text-xs text-gray-500 mb-1">Pending review</div>
-      <div class="text-3xl font-bold text-yellow-400">{{ tw_queue | selectattr('status','eq','pending') | list | length }}</div>
+      <div class="text-xs text-gray-500 mb-1">Loop status</div>
+      <div class="text-lg font-semibold mt-1
+        {% if tw.state == 'posting' %}text-yellow-400
+        {% elif tw.state and 'error' in tw.state %}text-red-400
+        {% elif tw.state == 'sleeping' %}text-blue-400
+        {% else %}text-gray-400{% endif %}">{{ (tw.state or 'idle') | title }}</div>
     </div>
     <div class="bg-gray-900 rounded-xl p-4">
-      <div class="text-xs text-gray-500 mb-1">Ready to post</div>
-      <div class="text-3xl font-bold text-sky-400">{{ tw_queue | selectattr('status','eq','approved') | list | length }}</div>
+      <div class="text-xs text-gray-500 mb-1">Last session</div>
+      <div class="text-lg font-semibold mt-1">{{ fmt(tw.last_session) }}</div>
+    </div>
+    <div class="bg-gray-900 rounded-xl p-4">
+      <div class="text-xs text-gray-500 mb-1">Next session</div>
+      <div class="text-lg font-semibold mt-1 text-blue-300">{{ fmt(tw.next_session) }}</div>
     </div>
   </div>
+  {% if tw.last_error %}
+  <div class="bg-red-950 border border-red-800 rounded-xl px-4 py-3 mb-4 text-red-300 text-sm">
+    Last error: {{ tw.last_error }}
+  </div>
+  {% endif %}
 
   {% set pending = tw_queue | selectattr('status','eq','pending') | list %}
   {% set approved = tw_queue | selectattr('status','eq','approved') | list %}

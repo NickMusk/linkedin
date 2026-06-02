@@ -34,7 +34,18 @@ def _post_reply(tweet_id: str, text: str) -> tuple:
         "x-twitter-active-user": "yes",
         "x-twitter-auth-type": "OAuth2Session",
         "x-twitter-client-language": "en",
-        "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "x-twitter-client-version": "Twitter-TweetDeck-blackbird-chrome/4.0.220811153004 electron/19.0.12 os/mac",
+        "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "accept": "*/*",
+        "accept-language": "en-US,en;q=0.9",
+        "origin": "https://x.com",
+        "referer": f"https://x.com/i/web/status/{tweet_id}",
+        "sec-ch-ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"macOS"',
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "same-origin",
     }
     body = {
         "variables": {
@@ -72,9 +83,16 @@ def _post_reply(tweet_id: str, text: str) -> tuple:
         resp = requests.post(CREATE_TWEET_URL, headers=headers, json=body, timeout=30)
         if resp.status_code == 200:
             data = resp.json()
+            errors = data.get("errors")
+            if errors:
+                msg = errors[0].get("message", "unknown")[:200]
+                code = errors[0].get("code", "")
+                return False, f"API error {code}: {msg}"
             result = (data.get("data") or {}).get("create_tweet", {}).get("tweet_results", {}).get("result", {})
             new_id = result.get("rest_id", "")
-            return True, f"https://x.com/i/status/{new_id}" if new_id else "posted"
+            if not new_id:
+                return False, f"No tweet ID in response: {str(data)[:200]}"
+            return True, f"https://x.com/i/status/{new_id}"
         return False, f"HTTP {resp.status_code}: {resp.text[:300]}"
     except Exception as e:
         return False, str(e)
