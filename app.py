@@ -830,6 +830,100 @@ def seconds_until_active(s):
     return max(60, int((target - now).total_seconds()))
 
 
+VC_DAILY_CAP = 15
+VC_SESSION_GAP_MIN = 240  # minutes between VC sessions
+_vc_last_session_ts = 0
+
+
+def run_vc_session():
+    global _vc_last_session_ts
+    from fetch_vc_posts import fetch_vc_posts, record_vc_interaction
+    from report import session_dir, save_posts
+    from knowledge_base import build_context, save_example
+    from generate_comments import generate_comments, VC_SYSTEM_PROMPT
+    from publish import _extract_activity_id, _get_social_id, _post_comment
+    from fetch_posts import mark_url_published
+    from config import UNIPILE_ACCOUNT_ID, PUBLISH_DELAY_MIN, PUBLISH_DELAY_MAX
+    import json as _json
+
+    minutes_since = (time.time() - _vc_last_session_ts) / 60 if _vc_last_session_ts else 9999
+    if minutes_since < VC_SESSION_GAP_MIN:
+        log.info(f"VC: gap not met ({int(minutes_since)}m < {VC_SESSION_GAP_MIN}m). Skipping.")
+        return 0
+
+    st = get_status()
+    today = today_str()
+    vc_done = st.get("vc_today_count", 0) if st.get("date") == today else 0
+    budget = VC_DAILY_CAP - vc_done
+    if budget <= 0:
+        log.info(f"VC: daily cap reached ({vc_done}/{VC_DAILY_CAP}). Skipping.")
+        return 0
+
+    log.info(f"=== VC session start — budget: {budget} ===")
+    _vc_last_session_ts = time.time()
+
+    posts = fetch_vc_posts(account_id=UNIPILE_ACCOUNT_ID)
+    if not posts:
+        log.info("VC: no new posts found.")
+        return 0
+
+    d = session_dir()
+    save_posts(posts, d)
+    with open(os.path.join(d, "vc_posts.json"), "w") as f:
+        _json.dump(posts, f, ensure_ascii=False, indent=2)
+
+    kb = build_context()
+    items = generate_comments(posts, kb, system_prompt=VC_SYSTEM_PROMPT)
+
+    publishable = [
+        it for it in items
+        if not it.get("skip") and len(it.get("draft", "")) >= 40
+    ][:budget]
+
+    if not publishable:
+        log.info("VC: nothing to publish after filtering.")
+        return 0
+
+    published = 0
+    for i, item in enumerate(publishable):
+        text = item["draft"].strip()
+        url = item["url"]
+        author = item.get("author", "?")
+        author_url = item.get("author_url", "")
+
+        log.info(f"  VC [{i+1}/{len(publishable)}] {author[:35]}")
+        aid = _extract_activity_id(url)
+        sid = _get_social_id(aid, account_id=UNIPILE_ACCOUNT_ID)
+        if not sid:
+            log.warning("    No social_id")
+            continue
+
+        ok, detail = _post_comment(sid, text, account_id=UNIPILE_ACCOUNT_ID)
+        if ok:
+            log.info(f"    VC OK: {detail}")
+            save_example(item.get("text", url), text)
+            log_comment(author, url, item.get("text", ""), text)
+            mark_url_published(url)
+            if author_url:
+                record_vc_interaction(author_url, url)
+            published += 1
+        else:
+            log.warning(f"    VC Failed: {detail}")
+
+        if i < len(publishable) - 1:
+            delay = random.randint(PUBLISH_DELAY_MIN, PUBLISH_DELAY_MAX)
+            log.info(f"  VC: waiting {delay}s...")
+            time.sleep(delay)
+
+    st2 = get_status()
+    today2 = today_str()
+    prev_vc = st2.get("vc_today_count", 0) if st2.get("date") == today2 else 0
+    prev_total = st2.get("today_count", 0) if st2.get("date") == today2 else 0
+    update_status(vc_today_count=prev_vc + published, today_count=prev_total + published)
+    log.info(f"=== VC session done: {published}/{len(publishable)} posted ===")
+    return published
+
+
 def run_linkedin_session(s):
     from fetch_posts import fetch_all_posts
     from report import session_dir, save_posts
@@ -958,6 +1052,11 @@ def linkedin_loop():
                 continue
 
             last_session_ts = time.time()
+            try:
+                run_vc_session()
+            except Exception as e:
+                log.error(f"VC session error: {e}", exc_info=True)
+
             try:
                 run_linkedin_session(s)
             except Exception as e:
