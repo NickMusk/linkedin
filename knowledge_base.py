@@ -7,10 +7,11 @@ KB_PATH = os.path.join(os.path.dirname(__file__), "nick_interview.md")
 EXAMPLES_PATH = os.path.join(DATA_DIR, "comment_examples.md")
 
 
-def build_context() -> str:
+def build_context(kb_path: str = None) -> str:
+    path = kb_path or KB_PATH
     parts = []
     try:
-        with open(KB_PATH, "r", encoding="utf-8") as f:
+        with open(path, "r", encoding="utf-8") as f:
             parts.append(f.read())
     except Exception as e:
         parts.append(f"[Knowledge base unavailable: {e}]")

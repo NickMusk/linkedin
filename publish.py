@@ -6,14 +6,17 @@ from config import UNIPILE_API_KEY, UNIPILE_DSN, UNIPILE_ACCOUNT_ID, PUBLISH_DEL
 from knowledge_base import save_example
 from fetch_posts import mark_url_published
 
+_DEFAULT_ACCOUNT_ID = UNIPILE_ACCOUNT_ID
+
 
 def _headers() -> dict:
     return {"X-API-KEY": UNIPILE_API_KEY, "Content-Type": "application/json"}
 
 
-def _get_social_id(activity_id: str):
+def _get_social_id(activity_id: str, account_id: str = None):
+    account_id = account_id or _DEFAULT_ACCOUNT_ID
     url = f"{UNIPILE_DSN}/api/v1/posts/{activity_id}"
-    resp = requests.get(url, headers=_headers(), params={"account_id": UNIPILE_ACCOUNT_ID}, timeout=15)
+    resp = requests.get(url, headers=_headers(), params={"account_id": account_id}, timeout=15)
     if resp.status_code == 200:
         return resp.json().get("social_id")
     return None
@@ -24,12 +27,13 @@ def _extract_activity_id(post_url: str):
     return m.group(1) if m else None
 
 
-def _post_comment(social_id: str, text: str) -> tuple:
+def _post_comment(social_id: str, text: str, account_id: str = None) -> tuple:
+    account_id = account_id or _DEFAULT_ACCOUNT_ID
     url = f"{UNIPILE_DSN}/api/v1/posts/{social_id}/comments"
     resp = requests.post(
         url,
         headers=_headers(),
-        json={"account_id": UNIPILE_ACCOUNT_ID, "text": text},
+        json={"account_id": account_id, "text": text},
         timeout=15,
     )
     if resp.status_code in (200, 201):
@@ -54,7 +58,7 @@ def _mark_published(comments_path: str, url: str):
         f.write("\n---\n".join(updated))
 
 
-def publish_comments(approved: list[dict], comments_path: str = None) -> list[dict]:
+def publish_comments(approved: list[dict], comments_path: str = None, account_id: str = None) -> list[dict]:
     results = []
 
     for i, item in enumerate(approved):
@@ -69,12 +73,12 @@ def publish_comments(approved: list[dict], comments_path: str = None) -> list[di
             results.append({**item, "published": False, "publish_detail": "could not extract activity ID from URL"})
             continue
 
-        social_id = _get_social_id(activity_id)
+        social_id = _get_social_id(activity_id, account_id=account_id)
         if not social_id:
             results.append({**item, "published": False, "publish_detail": "could not fetch post from Unipile"})
             continue
 
-        ok, detail = _post_comment(social_id, comment_text)
+        ok, detail = _post_comment(social_id, comment_text, account_id=account_id)
         results.append({**item, "published": ok, "publish_detail": detail})
 
         if ok:

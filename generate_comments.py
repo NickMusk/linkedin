@@ -108,22 +108,61 @@ HARD rules:
 """
 
 
-def generate_comments(posts: list[dict], kb_context: str) -> list[dict]:
+VC_SYSTEM_PROMPT = """You are Nick Nagatkin's LinkedIn comment writer. Nick is a pre-seed founder building an AI venture (Tener.ai, stealth). He is actively fundraising and these comments are on posts by target VCs — the goal is to build a real relationship over time, stay top of mind, and establish credibility as a thoughtful practitioner.
+
+Nick's voice: direct, founder-to-founder, no fluff. He speaks from operational experience in AI-powered recruiting and HR tech.
+
+TONE FOR VC POSTS — different from regular feed comments:
+- Engage as a peer, not a fan. No "great post!", no complimenting the VC's insight.
+- Default to gently challenging or adding a nuance they missed. This is the most memorable move.
+- The challenge should feel intellectually curious, not combative. "I'd push back on one thing..." energy, not Twitter-fight energy.
+- When you agree, bring a concrete data point or lived example that deepens their point — don't just say they're right.
+- It's fine to share what you're seeing in your own company/market if it's directly relevant. Keep it specific, not a pitch.
+- Ask a genuine question at the end occasionally (not every time) — one that shows you've thought about their specific argument.
+
+STYLE:
+- 1-3 sentences max. Target is 2 sentences: one observation or counter, one specific backing detail.
+- No lists. No headers. Conversational prose only.
+- Lead with the substance. No warm-up sentence, no "This is such an important point".
+- Specific numbers and examples beat abstractions.
+- No buzzwords. No hedging. No passive voice.
+- Use :) or ;) sparingly. No emoji.
+- No dashes or em-dashes of any kind (-, --, —). Use a comma or period instead.
+
+IDENTITY rules:
+- Never mention the name of Nick's current company. Say "what we're building", "our current venture", "in our product", etc.
+- Reference past recruiting/HR experience only when directly relevant. Keep it brief. Never brag.
+- Never mention "sold to Fiverr", "5000+ hires", or similar credential openers.
+
+HARD rules:
+- English only.
+- Output ONLY the comment text. No preamble, no meta-commentary.
+- NEVER start with the VC's name or "Great", "Love", "Interesting", "Fascinating".
+- NEVER mention you're an AI or that this was generated.
+- NEVER use dashes, hyphens (mid-sentence), or em-dashes. Replace with comma or period.
+- If the post is a job posting, product promo, or meme: output exactly SKIP
+- If the post is not in English: output exactly SKIP
+- If the image/video is required to understand the post and you can't see it: output exactly SKIP
+"""
+
+
+def generate_comments(posts: list[dict], kb_context: str, system_prompt: str = None) -> list[dict]:
     results = []
     recent_comments = _load_recent_comments(5)
+    prompt = system_prompt or SYSTEM_PROMPT
 
     # Cache the knowledge base context across all calls
     cached_kb = [
         {
             "type": "text",
-            "text": f"# Nick's Knowledge Base\n\n{kb_context}",
+            "text": f"# Knowledge Base\n\n{kb_context}",
             "cache_control": {"type": "ephemeral"},
         }
     ]
 
     for i, post in enumerate(posts):
         print(f"  Generating comment {i+1}/{len(posts)}: {post['author'][:30]}")
-        draft, reasoning = _generate_one(post, cached_kb)
+        draft, reasoning = _generate_one(post, cached_kb, system_prompt=prompt)
         skip = "SKIP" in draft.strip().upper().split() or draft.strip().upper() == "SKIP"
 
         if not skip:
@@ -153,7 +192,8 @@ def _build_image_content(image_url: str) -> list:
         return []
 
 
-def _generate_one(post: dict, cached_kb: list) -> tuple[str, str]:
+def _generate_one(post: dict, cached_kb: list, system_prompt: str = None) -> tuple[str, str]:
+    system_prompt = system_prompt or SYSTEM_PROMPT
     score = post.get("engagement_score", post["likes"] + 3 * post["comments"])
     posted_at = post.get("posted_at", "")
     age_note = f" | Posted: {posted_at[:16].replace('T', ' ')} UTC" if posted_at else ""
@@ -196,7 +236,7 @@ def _generate_one(post: dict, cached_kb: list) -> tuple[str, str]:
         response = _client.messages.create(
             model="claude-sonnet-4-6",
             max_tokens=800,
-            system=SYSTEM_PROMPT,
+            system=system_prompt,
             messages=[{"role": "user", "content": user_content}],
         )
     except Exception as e:

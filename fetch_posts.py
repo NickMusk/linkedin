@@ -4,6 +4,8 @@ import requests
 from datetime import datetime, timezone, timedelta
 from config import UNIPILE_API_KEY, UNIPILE_DSN, UNIPILE_ACCOUNT_ID, MIN_LIKES, DATA_DIR
 
+_DEFAULT_ACCOUNT_ID = UNIPILE_ACCOUNT_ID
+
 MAX_POST_AGE_HOURS = 48  # skip posts older than this
 SEEN_URLS_FILE = os.path.join(DATA_DIR, "seen_urls.json")
 PUBLISHED_URLS_FILE = os.path.join(DATA_DIR, "published_urls.json")
@@ -31,8 +33,9 @@ def mark_url_published(url: str):
 
 
 
-def _unipile_feed_page(pagination_token: str = None) -> tuple:
+def _unipile_feed_page(pagination_token: str = None, account_id: str = None) -> tuple:
     """Fetch one page of feed items. Returns (elements, next_pagination_token)."""
+    account_id = account_id or _DEFAULT_ACCOUNT_ID
     url = FEED_URL + f"&count={FEED_BATCH}"
     if pagination_token:
         url += f"&paginationToken={pagination_token}"
@@ -45,7 +48,7 @@ def _unipile_feed_page(pagination_token: str = None) -> tuple:
     resp = requests.post(
         f"{UNIPILE_DSN}/api/v1/linkedin",
         headers=headers,
-        json={"account_id": UNIPILE_ACCOUNT_ID, "method": "GET", "request_url": url},
+        json={"account_id": account_id, "method": "GET", "request_url": url},
         timeout=30,
     )
     resp.raise_for_status()
@@ -74,13 +77,14 @@ def _detect_content_type(el: dict) -> str:
     return "text"
 
 
-def _fetch_attachment_url(activity_id: str) -> str:
+def _fetch_attachment_url(activity_id: str, account_id: str = None) -> str:
     """Fetch image URL for a post via Unipile's native post endpoint."""
+    account_id = account_id or _DEFAULT_ACCOUNT_ID
     try:
         resp = requests.get(
             f"{UNIPILE_DSN}/api/v1/posts/{activity_id}",
             headers={"X-API-KEY": UNIPILE_API_KEY},
-            params={"account_id": UNIPILE_ACCOUNT_ID},
+            params={"account_id": account_id},
             timeout=10,
         )
         if resp.status_code != 200:
@@ -143,9 +147,10 @@ def _normalize(el: dict):
     }
 
 
-def fetch_feed_posts(target: int = 30) -> list[dict]:
+def fetch_feed_posts(target: int = 30, account_id: str = None, min_likes: int = None) -> list[dict]:
     seen_urls = _load_seen_urls()
     published_urls = _load_published_urls()
+    effective_min_likes = min_likes if min_likes is not None else MIN_LIKES
     posts = []
     pagination_token = None
     pages_fetched = 0
@@ -153,7 +158,7 @@ def fetch_feed_posts(target: int = 30) -> list[dict]:
 
     while len(posts) < target and pages_fetched < max_pages:
         try:
-            elements, pagination_token = _unipile_feed_page(pagination_token)
+            elements, pagination_token = _unipile_feed_page(pagination_token, account_id=account_id)
         except Exception as e:
             print(f"  Feed fetch error (page {pages_fetched + 1}): {e}")
             break
@@ -168,7 +173,7 @@ def fetch_feed_posts(target: int = 30) -> list[dict]:
             url = post["url"]
             if url in seen_urls or url in published_urls:
                 continue
-            if post["likes"] < MIN_LIKES:
+            if post["likes"] < effective_min_likes:
                 continue
             # Skip posts older than MAX_POST_AGE_HOURS
             if post["posted_at"]:
@@ -197,7 +202,7 @@ def fetch_feed_posts(target: int = 30) -> list[dict]:
         m = _re.search(r"activity[:\-](\d+)", post["url"])
         if not m:
             continue
-        img_url = _fetch_attachment_url(m.group(1))
+        img_url = _fetch_attachment_url(m.group(1), account_id=account_id)
         if img_url:
             post["image_url"] = img_url
             enriched += 1
@@ -207,8 +212,8 @@ def fetch_feed_posts(target: int = 30) -> list[dict]:
     return posts
 
 
-def fetch_all_posts() -> list[dict]:
+def fetch_all_posts(account_id: str = None, min_likes: int = None) -> list[dict]:
     print("Fetching LinkedIn feed posts via Unipile...")
-    posts = fetch_feed_posts(target=30)
+    posts = fetch_feed_posts(target=30, account_id=account_id, min_likes=min_likes)
     print(f"Total posts fetched: {len(posts)}")
     return posts
