@@ -111,6 +111,8 @@ def _normalize(el: dict):
     actor = el.get("actor") or {}
     author_name = _extract_text(actor.get("name") or {})
     author_title = _extract_text(actor.get("description") or {})
+    nav = (actor.get("navigationContext") or {}).get("actionTarget", "")
+    author_url = nav.split("?")[0] if nav else ""
 
     counts = ((el.get("socialDetail") or {}).get("totalSocialActivityCounts") or {})
     likes = counts.get("numLikes", 0) or 0
@@ -134,7 +136,7 @@ def _normalize(el: dict):
         "url": clean_url,
         "author": author_name or "Unknown",
         "author_title": author_title,
-        "author_url": "",
+        "author_url": author_url,
         "text": text,
         "likes": likes,
         "comments": comments,
