@@ -400,8 +400,12 @@ def main():
             system_prompt = _load_system_prompt(config.get("system_prompt_path"))
             min_likes = config.get("min_likes")
 
-            # VC watchlist is priority — runs first, Nick's account only
             from config import UNIPILE_ACCOUNT_ID as _NICK_ACCOUNT_ID
+            from generate_comments import GENERIC_SYSTEM_PROMPT
+            if system_prompt is None and account_id != _NICK_ACCOUNT_ID:
+                system_prompt = GENERIC_SYSTEM_PROMPT
+
+            # VC watchlist is priority — runs first, Nick's account only
             if account_id == _NICK_ACCOUNT_ID:
                 try:
                     run_vc_session(
