@@ -667,6 +667,47 @@ VIRAL_TEMPLATE = """<!DOCTYPE html>
 """
 
 
+@app.route("/multi-status")
+def multi_status():
+    """Diagnostic: show per-account state for multi-account loop."""
+    import json as _json
+    from accounts import list_linkedin_accounts, get_account_config, get_account_state
+    from config import UNIPILE_ACCOUNT_ID as NICK_ID
+    try:
+        accounts = list_linkedin_accounts()
+    except Exception as e:
+        return {"error": f"list_linkedin_accounts: {e}"}, 500
+    out = []
+    for a in accounts:
+        aid = a.get("id") or ""
+        if aid == NICK_ID:
+            continue
+        cfg = get_account_config(aid)
+        st = get_account_state(aid)
+        last_ts = st.get("last_session_ts", 0)
+        out.append({
+            "name": a.get("name"),
+            "id": aid,
+            "active": cfg.get("active", True),
+            "daily_cap": cfg.get("daily_cap"),
+            "min_likes": cfg.get("min_likes"),
+            "today_count": st.get("count", 0) if st.get("date") == today_str() else 0,
+            "last_session_ago_min": int((time.time() - last_ts) / 60) if last_ts else None,
+        })
+    return {"count": len(out), "accounts": out}
+
+
+@app.route("/multi-trigger", methods=["GET", "POST"])
+def multi_trigger():
+    """Manually trigger one multi-account session (for debugging)."""
+    try:
+        posted = run_multi_account_sessions()
+        return {"ok": True, "posted": posted}
+    except Exception as e:
+        import traceback
+        return {"ok": False, "error": str(e), "trace": traceback.format_exc()[:2000]}, 500
+
+
 @app.route("/stats")
 def stats():
     import json as _json
