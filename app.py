@@ -1025,6 +1025,117 @@ def run_linkedin_session(s):
     return published
 
 
+def run_multi_account_sessions():
+    """Iterate non-Nick LinkedIn accounts from Unipile and run a session for each."""
+    from accounts import list_linkedin_accounts, get_account_config, get_account_state, save_account_state
+    from fetch_posts import fetch_all_posts, mark_url_published
+    from report import session_dir, save_posts
+    from knowledge_base import build_context, save_example
+    from generate_comments import generate_comments, GENERIC_SYSTEM_PROMPT, SYSTEM_PROMPT
+    from publish import _extract_activity_id, _get_social_id, _post_comment
+    from config import UNIPILE_ACCOUNT_ID as NICK_ID, PUBLISH_DELAY_MIN, PUBLISH_DELAY_MAX
+    import json as _json
+
+    try:
+        accounts = list_linkedin_accounts()
+    except Exception as e:
+        log.error(f"Multi-account: could not list accounts: {e}")
+        return 0
+
+    other_accounts = [a for a in accounts if (a.get("id") or "") != NICK_ID]
+    log.info(f"Multi-account: found {len(other_accounts)} non-Nick LinkedIn accounts.")
+
+    total_posted = 0
+    for account in other_accounts:
+        account_id = account.get("id") or ""
+        if not account_id:
+            continue
+
+        config = get_account_config(account_id)
+        if not config.get("active", True):
+            continue
+
+        name = config.get("name") or account.get("name") or account_id[:12]
+        daily_cap = config.get("daily_cap", 10)
+        min_likes = config.get("min_likes", 0)
+
+        state = get_account_state(account_id)
+        today = today_str()
+        done = state.get("count", 0) if state.get("date") == today else 0
+        if done >= daily_cap:
+            log.info(f"[{name}] Daily cap reached ({done}/{daily_cap}). Skipping.")
+            continue
+
+        last_ts = state.get("last_session_ts", 0)
+        minutes_since = (time.time() - last_ts) / 60 if last_ts else 9999
+        if minutes_since < 150:
+            log.info(f"[{name}] Last session {int(minutes_since)}m ago. Skipping.")
+            continue
+
+        budget = min(6, daily_cap - done)
+        log.info(f"=== Multi-acc session [{name}] — budget: {budget} ===")
+
+        try:
+            posts = fetch_all_posts(account_id=account_id, min_likes=min_likes)
+        except Exception as e:
+            log.error(f"[{name}] fetch error: {e}")
+            continue
+
+        if not posts:
+            log.info(f"[{name}] No posts.")
+            continue
+
+        kb = build_context()  # default Nick's KB (user explicitly chose this)
+        items = generate_comments(posts, kb, system_prompt=GENERIC_SYSTEM_PROMPT)
+
+        publishable = [
+            it for it in items
+            if not it.get("skip") and len(it.get("draft", "")) >= 40
+        ][:budget]
+
+        if not publishable:
+            log.info(f"[{name}] Nothing publishable.")
+            continue
+
+        published = 0
+        for i, item in enumerate(publishable):
+            text = item["draft"].strip()
+            url = item["url"]
+            author = item.get("author", "?")[:35]
+            log.info(f"  [{name}] [{i+1}/{len(publishable)}] {author}")
+
+            aid = _extract_activity_id(url)
+            sid = _get_social_id(aid, account_id=account_id)
+            if not sid:
+                log.warning(f"    [{name}] No social_id")
+                continue
+
+            ok, detail = _post_comment(sid, text, account_id=account_id)
+            if ok:
+                log.info(f"    [{name}] OK: {detail}")
+                log_comment(f"{name} → {author}", url, item.get("text", ""), text)
+                mark_url_published(url)
+                published += 1
+            else:
+                log.warning(f"    [{name}] Failed: {detail}")
+
+            if i < len(publishable) - 1:
+                delay = random.randint(PUBLISH_DELAY_MIN, PUBLISH_DELAY_MAX)
+                time.sleep(delay)
+
+        # Update account state
+        new_state = state if state.get("date") == today else {"date": today, "count": 0, "last_session_ts": 0}
+        new_state["count"] = new_state.get("count", 0) + published
+        new_state["last_session_ts"] = time.time()
+        new_state["date"] = today
+        save_account_state(account_id, new_state)
+
+        total_posted += published
+        log.info(f"=== Multi-acc [{name}] done: {published}/{len(publishable)} posted ===")
+
+    return total_posted
+
+
 def linkedin_loop():
     log.info("LinkedIn loop started.")
     last_session_ts = 0
@@ -1062,6 +1173,11 @@ def linkedin_loop():
             except Exception as e:
                 log.error(f"LinkedIn session error: {e}", exc_info=True)
                 update_status(state="error", last_error=str(e)[:200])
+
+            try:
+                run_multi_account_sessions()
+            except Exception as e:
+                log.error(f"Multi-account sessions error: {e}", exc_info=True)
 
             s = get_settings()
             gap = random.randint(s["gap_min"], s["gap_max"])
