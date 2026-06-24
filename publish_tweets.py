@@ -19,6 +19,26 @@ SKIP_PHRASES = [
     "The tweet only contains a URL",
 ]
 
+# Markers that mean the Twitter cookies (auth_token/ct0) are dead/invalid, as
+# opposed to a transient per-tweet failure. Used to flag auth health so an
+# expired cookie surfaces explicitly instead of looking like "no new tweets".
+_AUTH_ERROR_MARKERS = (
+    "HTTP 401", "HTTP 403",
+    "API error 32",   # Could not authenticate you
+    "API error 89",   # Invalid or expired token
+    "API error 64",   # account suspended
+    "API error 215",  # Bad authentication data
+    "API error 326",  # account locked
+    "Could not authenticate",
+    "invalid or expired token",
+    "bad authentication",
+)
+
+
+def _is_auth_failure(detail: str) -> bool:
+    d = (detail or "").lower()
+    return any(m.lower() in d for m in _AUTH_ERROR_MARKERS)
+
 
 def _extract_tweet_id(url: str) -> str:
     m = re.search(r"/status/(\d+)", url)
@@ -26,76 +46,14 @@ def _extract_tweet_id(url: str) -> str:
 
 
 def _post_reply(tweet_id: str, text: str) -> tuple:
-    headers = {
-        "authorization": f"Bearer {BEARER_TOKEN}",
-        "x-csrf-token": TWITTER_CT0,
-        "cookie": f"auth_token={TWITTER_AUTH_TOKEN}; ct0={TWITTER_CT0}",
-        "content-type": "application/json",
-        "x-twitter-active-user": "yes",
-        "x-twitter-auth-type": "OAuth2Session",
-        "x-twitter-client-language": "en",
-        "x-twitter-client-version": "Twitter-TweetDeck-blackbird-chrome/4.0.220811153004 electron/19.0.12 os/mac",
-        "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "accept": "*/*",
-        "accept-language": "en-US,en;q=0.9",
-        "origin": "https://x.com",
-        "referer": f"https://x.com/i/web/status/{tweet_id}",
-        "sec-ch-ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
-        "sec-ch-ua-mobile": "?0",
-        "sec-ch-ua-platform": '"macOS"',
-        "sec-fetch-dest": "empty",
-        "sec-fetch-mode": "cors",
-        "sec-fetch-site": "same-origin",
-    }
-    body = {
-        "variables": {
-            "tweet_text": text,
-            "reply": {
-                "in_reply_to_tweet_id": tweet_id,
-                "exclude_reply_user_ids": [],
-            },
-            "dark_request": False,
-            "media": {"media_entities": [], "possibly_sensitive": False},
-            "semantic_annotation_ids": [],
-        },
-        "features": {
-            "tweetypie_unmention_optimization_enabled": True,
-            "responsive_web_edit_tweet_api_enabled": True,
-            "graphql_is_translatable_rweb_tweet_is_translatable_enabled": True,
-            "view_counts_everywhere_api_enabled": True,
-            "longform_notetweets_consumption_enabled": True,
-            "responsive_web_twitter_article_tweet_consumption_enabled": False,
-            "tweet_awards_web_tipping_enabled": False,
-            "freedom_of_speech_not_reach_label_enabled": False,
-            "standardized_nudges_misinfo": True,
-            "tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled": True,
-            "longform_notetweets_rich_text_read_enabled": True,
-            "longform_notetweets_inline_media_enabled": True,
-            "responsive_web_graphql_exclude_directive_enabled": True,
-            "verified_phone_label_enabled": False,
-            "responsive_web_graphql_skip_user_profile_image_extensions_enabled": False,
-            "responsive_web_graphql_timeline_navigation_enabled": True,
-            "responsive_web_enhance_cards_enabled": False,
-        },
-        "queryId": QUERY_ID,
-    }
-    try:
-        resp = requests.post(CREATE_TWEET_URL, headers=headers, json=body, timeout=30)
-        if resp.status_code == 200:
-            data = resp.json()
-            errors = data.get("errors")
-            if errors:
-                msg = errors[0].get("message", "unknown")[:200]
-                code = errors[0].get("code", "")
-                return False, f"API error {code}: {msg}"
-            result = (data.get("data") or {}).get("create_tweet", {}).get("tweet_results", {}).get("result", {})
-            new_id = result.get("rest_id", "")
-            if not new_id:
-                return False, f"No tweet ID in response: {str(data)[:200]}"
-            return True, f"https://x.com/i/status/{new_id}"
-        return False, f"HTTP {resp.status_code}: {resp.text[:300]}"
-    except Exception as e:
-        return False, str(e)
+    """Reply to a tweet via the official X API v2 (OAuth 1.0a).
+
+    Replaces the old scrape-based CreateTweet, which hit X's automation block
+    (error 226) from the server IP. Returns (ok, url_or_error) — same contract
+    as before, so run_twitter_session / publish_replies are unaffected.
+    """
+    import x_api
+    return x_api.reply(text, tweet_id)
 
 
 def run_twitter_session(settings: dict, log_fn=None, update_status_fn=None) -> int:
@@ -113,9 +71,17 @@ def run_twitter_session(settings: dict, log_fn=None, update_status_fn=None) -> i
     log.info("Twitter session: fetching tweets...")
     tweets = fetch_tweets()
     if not tweets:
-        log.info("Twitter: no new tweets.")
-        if update_status_fn:
-            update_status_fn(state="sleeping")
+        import fetch_tweets as _ft
+        if _ft.LAST_FETCH.get("auth_suspect"):
+            detail = (f"fetch returned no raw items "
+                      f"({_ft.LAST_FETCH['errors']}/{_ft.LAST_FETCH['keywords']} keywords errored)")
+            log.error(f"Twitter: SYSTEMIC fetch failure, cookies likely expired: {detail}")
+            if update_status_fn:
+                update_status_fn(state="auth_error", auth_ok=False, last_auth_error=detail)
+        else:
+            log.info("Twitter: no new tweets.")
+            if update_status_fn:
+                update_status_fn(state="sleeping")
         return 0
 
     log.info(f"Twitter: {len(tweets)} tweets. Generating replies...")
@@ -175,6 +141,23 @@ def run_twitter_session(settings: dict, log_fn=None, update_status_fn=None) -> i
                     reply_text=item["draft"],
                 )
             posted += 1
+            if update_status_fn:
+                update_status_fn(
+                    auth_ok=True,
+                    last_auth_error=None,
+                    last_post_at=datetime.now(timezone.utc).isoformat(),
+                )
+        elif _is_auth_failure(detail):
+            # Dead cookies: every remaining post will fail the same way. Flag it
+            # loudly and stop the session instead of silently churning.
+            log.error(f"    AUTH FAILURE (cookies likely expired): {detail}")
+            if update_status_fn:
+                update_status_fn(
+                    state="auth_error",
+                    auth_ok=False,
+                    last_auth_error=detail[:300],
+                )
+            return posted
         else:
             log.warning(f"    Failed: {detail}")
 

@@ -16,6 +16,13 @@ UNIPILE_ACCOUNT_ID = os.environ["UNIPILE_ACCOUNT_ID"]
 TWITTER_AUTH_TOKEN = os.environ["TWITTER_AUTH_TOKEN"]
 TWITTER_CT0 = os.environ["TWITTER_CT0"]
 
+# Official X API v2 (OAuth 1.0a user context) — used for posting/replying.
+# Replaces the scrape-based CreateTweet that hit X's automation block (226).
+X_API_KEY = os.getenv("X_API_KEY", "")
+X_API_SECRET = os.getenv("X_API_SECRET", "")
+X_ACCESS_TOKEN = os.getenv("X_ACCESS_TOKEN", "")
+X_ACCESS_TOKEN_SECRET = os.getenv("X_ACCESS_TOKEN_SECRET", "")
+
 # LinkedIn profile identifier for fetching own posts (e.g. "ACoAA...")
 LINKEDIN_PROFILE_ID = os.getenv("LINKEDIN_PROFILE_ID", "")
 

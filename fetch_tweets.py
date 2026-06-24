@@ -1,9 +1,28 @@
 import time
 import json
 import os
+from email.utils import parsedate_to_datetime
 from datetime import datetime, timezone, timedelta
 from apify_client import ApifyClient
 from config import APIFY_API_TOKEN, TWITTER_AUTH_TOKEN, TWITTER_CT0
+
+
+def _parse_tweet_date(created: str):
+    """Parse a tweet timestamp robustly. The apidojo scraper returns Twitter's
+    native format ('Tue Jun 23 19:05:56 +0000 2026'), which datetime.fromisoformat
+    does NOT accept — relying on it silently broke the age filter (it parsed on
+    newer Python in unexpected ways / failed on older). Try ISO first, then the
+    Twitter/RFC-822 format. Returns an aware datetime or None if unparseable."""
+    if not created:
+        return None
+    try:
+        return datetime.fromisoformat(created.replace("Z", "+00:00"))
+    except Exception:
+        pass
+    try:
+        return parsedate_to_datetime(created)
+    except Exception:
+        return None
 
 MAX_TWEET_AGE_DAYS = 2
 SEEN_TWEETS_FILE = os.path.join(os.path.dirname(__file__), "seen_tweets.json")
@@ -50,11 +69,20 @@ def _save_seen_tweets(seen: set):
         json.dump(merged, f)
 
 
+# Diagnostic snapshot of the most recent fetch_tweets() run. Lets callers tell
+# "Twitter returned nothing because there was nothing new" apart from
+# "the scrape failed entirely (expired cookies / Apify / network)".
+LAST_FETCH = {"keywords": 0, "errors": 0, "raw_items": 0, "auth_suspect": False}
+
+
 def fetch_tweets() -> list[dict]:
     client = ApifyClient(APIFY_API_TOKEN)
     tweets = []
     seen = _load_seen_tweets()
     cutoff = datetime.now(timezone.utc) - timedelta(days=MAX_TWEET_AGE_DAYS)
+
+    errors = 0
+    raw_items = 0
 
     for keyword in TWITTER_KEYWORDS:
         print(f"  Fetching tweets: {keyword}")
@@ -71,21 +99,30 @@ def fetch_tweets() -> list[dict]:
                 ],
             })
             for item in client.dataset(run["defaultDatasetId"]).iterate_items():
+                raw_items += 1
                 url = item.get("url") or item.get("tweetUrl", "")
                 likes = item.get("likeCount", 0) or item.get("favoriteCount", 0) or 0
                 created = item.get("createdAt", "") or item.get("created_at", "")
-                try:
-                    tweet_date = datetime.fromisoformat(created.replace("Z", "+00:00"))
-                    if tweet_date < cutoff:
-                        continue
-                except Exception:
-                    pass
+                tweet_date = _parse_tweet_date(created)
+                if tweet_date is not None and tweet_date < cutoff:
+                    continue
                 if url and url not in seen and likes >= MIN_LIKES:
                     seen.add(url)
                     tweets.append(_normalize(item, keyword))
         except Exception as e:
+            errors += 1
             print(f"  Warning: failed for '{keyword}': {e}")
         time.sleep(2)
+
+    # Every keyword failed, or the scraper returned zero raw items across all of
+    # them: that is a systemic failure (most often dead Twitter cookies), not a
+    # quiet feed. Surface it so the loop can flag auth health.
+    auth_suspect = (errors == len(TWITTER_KEYWORDS)) or (raw_items == 0)
+    LAST_FETCH.update(keywords=len(TWITTER_KEYWORDS), errors=errors,
+                      raw_items=raw_items, auth_suspect=auth_suspect)
+    if auth_suspect:
+        print(f"  [fetch_tweets] SYSTEMIC FAILURE: {errors}/{len(TWITTER_KEYWORDS)} "
+              f"keywords errored, {raw_items} raw items. Twitter cookies likely expired.")
 
     _save_seen_tweets(seen)
     return tweets

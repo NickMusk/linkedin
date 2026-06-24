@@ -23,6 +23,14 @@ services:
         sync: false
       - key: TWITTER_CT0
         sync: false
+      - key: X_API_KEY
+        sync: false
+      - key: X_API_SECRET
+        sync: false
+      - key: X_ACCESS_TOKEN
+        sync: false
+      - key: X_ACCESS_TOKEN_SECRET
+        sync: false
       - key: LINKEDIN_LI_AT
         sync: false
       - key: LINKEDIN_PROFILE_ID

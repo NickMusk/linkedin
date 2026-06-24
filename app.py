@@ -28,8 +28,8 @@ TW_LOG             = os.path.join(DATA_DIR, "twitter_log.json")
 TW_QUEUE_FILE      = os.path.join(DATA_DIR, "twitter_queue.json")
 
 _PREV_DEFAULTS = {
-    "max_per_day": 18, "max_per_session": 6, "active_start": 8, "active_end": 21,
-    "gap_min": 150, "gap_max": 240,
+    "max_per_day": 18, "max_per_session": 6, "active_start": 0, "active_end": 23,
+    "gap_min": 45, "gap_max": 120,
     "tw_max_per_day": 20, "tw_max_per_session": 8, "tw_gap_min": 240, "tw_gap_max": 480,
     "tw_max_per_day": 50, "tw_max_per_session": 15, "tw_gap_min": 45, "tw_gap_max": 120,
     "tw_reply_delay_min": 180, "tw_reply_delay_max": 240,
@@ -37,13 +37,13 @@ _PREV_DEFAULTS = {
 }
 
 DEFAULT_SETTINGS = {
-    # LinkedIn — 24/7, randomised gaps 45–120 min
+    # LinkedIn — daytime SF hours (8–21), randomised gaps 150–240 min
     "max_per_day":     50,
     "max_per_session": 12,
-    "active_start":     0,
-    "active_end":      24,
-    "gap_min":         45,
-    "gap_max":        120,
+    "active_start":     8,
+    "active_end":      21,
+    "gap_min":        150,
+    "gap_max":        240,
     # Twitter — 3/day, 1/session, gaps 3–4h
     "tw_max_per_day":      3,
     "tw_max_per_session":  1,
@@ -100,7 +100,44 @@ def get_tw_status():
     return load_json(TW_STATUS_FILE, {
         "today_count": 0, "date": "", "last_session": None,
         "next_session": None, "state": "idle", "last_error": None,
+        "auth_ok": True, "last_post_at": None, "last_auth_error": None,
     })
+
+
+# A Twitter session can legitimately post nothing, so "hours since last reply"
+# alone is noisy. We only call it unhealthy after this long with zero posts.
+TW_STALE_HOURS = 24
+
+
+def twitter_health() -> dict:
+    """Health snapshot for the Twitter loop. healthy=False means it needs a human
+    (almost always: refresh TWITTER_AUTH_TOKEN / TWITTER_CT0)."""
+    st = get_tw_status()
+    reasons = []
+
+    if st.get("auth_ok") is False:
+        reasons.append("auth_failed: " + (st.get("last_auth_error") or "Twitter cookies rejected"))
+
+    last_post_at = st.get("last_post_at")
+    hours_since = None
+    if last_post_at:
+        try:
+            dt = datetime.fromisoformat(last_post_at)
+            hours_since = (datetime.now(timezone.utc) - dt).total_seconds() / 3600
+            if hours_since > TW_STALE_HOURS:
+                reasons.append(f"stale: no reply posted in {int(hours_since)}h (>{TW_STALE_HOURS}h)")
+        except Exception:
+            pass
+
+    return {
+        "healthy": not reasons,
+        "reasons": reasons,
+        "auth_ok": st.get("auth_ok", True),
+        "last_post_at": last_post_at,
+        "hours_since_last_post": round(hours_since, 1) if hours_since is not None else None,
+        "state": st.get("state"),
+        "today_count": st.get("today_count", 0),
+    }
 
 
 def get_recent_comments(limit=30):
@@ -665,6 +702,15 @@ VIRAL_TEMPLATE = """<!DOCTYPE html>
 </body>
 </html>
 """
+
+
+@app.route("/twitter/health")
+def twitter_health_endpoint():
+    """Health probe for the Twitter loop. Returns HTTP 503 when it needs a human
+    (almost always: refresh TWITTER_AUTH_TOKEN / TWITTER_CT0). Point an uptime
+    monitor here to get alerted instead of noticing weeks later."""
+    h = twitter_health()
+    return h, (200 if h["healthy"] else 503)
 
 
 @app.route("/multi-status")
@@ -1240,8 +1286,13 @@ def update_tw_status(**kwargs):
     st = get_tw_status()
     today = today_str()
     if st.get("date") != today:
+        # New day resets counters, but auth/post health must persist across days
+        # (a cookie that died yesterday is still dead today).
         st = {"date": today, "today_count": 0, "last_session": None,
-              "next_session": None, "state": "idle", "last_error": None}
+              "next_session": None, "state": "idle", "last_error": None,
+              "auth_ok": st.get("auth_ok", True),
+              "last_post_at": st.get("last_post_at"),
+              "last_auth_error": st.get("last_auth_error")}
     st.update(kwargs)
     st["date"] = today
     save_json(TW_STATUS_FILE, st)
@@ -1298,10 +1349,20 @@ def twitter_loop():
             prev = tw_st2.get("today_count", 0) if tw_st2.get("date") == today2 else 0
             new_count = prev + posted
 
+            health = twitter_health()
+            if not health["healthy"]:
+                log.error(
+                    "TWITTER UNHEALTHY — needs attention (likely expired cookies, "
+                    "refresh TWITTER_AUTH_TOKEN / TWITTER_CT0): "
+                    + "; ".join(health["reasons"])
+                    + " | check /twitter/health"
+                )
+
             s2 = get_settings()
             gap = random.randint(s2["tw_gap_min"], s2["tw_gap_max"])
             wake = datetime.now(timezone.utc) + timedelta(minutes=gap)
-            update_tw_status(today_count=new_count, state="sleeping", next_session=wake.isoformat())
+            tw_state = "sleeping" if health["healthy"] else "auth_error"
+            update_tw_status(today_count=new_count, state=tw_state, next_session=wake.isoformat())
             log.info(f"Twitter: next session in {gap}m (~{wake.astimezone(SF_TZ).strftime('%H:%M')} SF).")
             last_session_ts = time.time()
             time.sleep(gap * 60)
