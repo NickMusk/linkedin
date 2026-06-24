@@ -37,7 +37,24 @@ _AUTH_ERROR_MARKERS = (
 
 def _is_auth_failure(detail: str) -> bool:
     d = (detail or "").lower()
+    if _is_reply_restriction(detail):
+        return False  # per-tweet restriction, not an auth problem
     return any(m.lower() in d for m in _AUTH_ERROR_MARKERS)
+
+
+# X blocks replying when the post's author limited who can reply (conversation
+# controls), common when replying to strangers from a young account. This is a
+# per-tweet condition — skip the tweet and try the next, do NOT abort the session.
+def _is_reply_restriction(detail: str) -> bool:
+    d = (detail or "").lower()
+    return ("reply to this conversation is not allowed" in d
+            or "not been mentioned or otherwise engaged" in d)
+
+
+# Pay-per-use credits exhausted — fatal for the whole session (top up needed).
+def _is_credit_failure(detail: str) -> bool:
+    d = (detail or "").lower()
+    return "creditsdepleted" in d or "does not have any credits" in d or "http 402" in d
 
 
 def _extract_tweet_id(url: str) -> str:
@@ -86,7 +103,8 @@ def run_twitter_session(settings: dict, log_fn=None, update_status_fn=None) -> i
 
     log.info(f"Twitter: {len(tweets)} tweets. Generating replies...")
     if update_status_fn:
-        update_status_fn(state="generating")
+        # Fetch clearly worked — clear any stale systemic-failure flag.
+        update_status_fn(state="generating", auth_ok=True, last_auth_error=None)
 
     kb = build_context()
     items = generate_replies(tweets, kb)
@@ -96,37 +114,46 @@ def run_twitter_session(settings: dict, log_fn=None, update_status_fn=None) -> i
         settings.get("tw_max_per_day", 20) - settings.get("_tw_today_count", 0),
     )
 
-    to_post = [
+    candidates = [
         it for it in items
         if not it.get("skip")
         and len(it.get("draft", "")) >= 20
         and not any(p in it.get("draft", "") for p in SKIP_PHRASES)
-    ][:budget]
+    ]
+    # Many target tweets restrict replies (403). Try a larger pool than `budget`
+    # so we keep going past restricted tweets until `budget` replies actually
+    # land. Restricted attempts fail before a tweet is created, so they cost no
+    # credits. Cap attempts to avoid an endless loop / runaway cost.
+    max_attempts = min(len(candidates), max(budget * 8, 12))
+    candidates = candidates[:max_attempts]
 
-    if not to_post:
+    if not candidates:
         log.info("Twitter: nothing to publish.")
         if update_status_fn:
             update_status_fn(state="sleeping")
         return 0
 
-    log.info(f"Twitter: publishing {len(to_post)} replies...")
+    log.info(f"Twitter: up to {len(candidates)} candidates, target {budget} replies...")
     if update_status_fn:
         update_status_fn(state="posting")
 
     delay_min = settings.get("tw_reply_delay_min", 180)
     delay_max = settings.get("tw_reply_delay_max", 240)
     posted = 0
+    skipped_restricted = 0
 
-    for i, item in enumerate(to_post):
+    for item in candidates:
+        if posted >= budget:
+            break
         tweet_id = _extract_tweet_id(item["url"])
         if not tweet_id:
             continue
 
-        log.info(f"  Twitter [{i+1}/{len(to_post)}] @{item.get('author_username', item.get('author', '?'))[:30]}")
+        author = item.get("author_username", item.get("author", "?"))[:30]
         ok, detail = _post_reply(tweet_id, item["draft"])
 
         if ok:
-            log.info(f"    OK: {detail}")
+            log.info(f"    OK @{author}: {detail}")
             save_tweet_example(item.get("text", ""), item["draft"])
             try:
                 from analyze_viral_tweets import save_viral_tweet
@@ -147,26 +174,31 @@ def run_twitter_session(settings: dict, log_fn=None, update_status_fn=None) -> i
                     last_auth_error=None,
                     last_post_at=datetime.now(timezone.utc).isoformat(),
                 )
-        elif _is_auth_failure(detail):
-            # Dead cookies: every remaining post will fail the same way. Flag it
-            # loudly and stop the session instead of silently churning.
-            log.error(f"    AUTH FAILURE (cookies likely expired): {detail}")
+            if posted < budget:
+                delay = random.randint(delay_min, delay_max)
+                log.info(f"  Twitter: waiting {delay}s...")
+                time.sleep(delay)
+        elif _is_credit_failure(detail):
+            log.error(f"    CREDITS DEPLETED — top up X API credits: {detail}")
             if update_status_fn:
-                update_status_fn(
-                    state="auth_error",
-                    auth_ok=False,
-                    last_auth_error=detail[:300],
-                )
+                update_status_fn(state="credits_depleted", auth_ok=False,
+                                 last_auth_error="credits depleted: " + detail[:250])
             return posted
+        elif _is_auth_failure(detail):
+            log.error(f"    AUTH FAILURE: {detail}")
+            if update_status_fn:
+                update_status_fn(state="auth_error", auth_ok=False,
+                                 last_auth_error=detail[:300])
+            return posted
+        elif _is_reply_restriction(detail):
+            skipped_restricted += 1
+            log.info(f"    skip @{author}: replies restricted by author")
+            continue  # try next candidate, no delay, no credit spent
         else:
-            log.warning(f"    Failed: {detail}")
+            log.warning(f"    Failed @{author}: {detail}")
+            continue
 
-        if i < len(to_post) - 1:
-            delay = random.randint(delay_min, delay_max)
-            log.info(f"  Twitter: waiting {delay}s...")
-            time.sleep(delay)
-
-    log.info(f"Twitter session done: {posted}/{len(to_post)} posted.")
+    log.info(f"Twitter session done: {posted} posted, {skipped_restricted} skipped (restricted).")
 
     if posted > 0:
         try:
