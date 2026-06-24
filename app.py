@@ -1372,11 +1372,81 @@ def twitter_loop():
             time.sleep(300)
 
 
+# ── Own X posts (autonomous, 1/day) ─────────────────────────────────────────
+
+OWN_X_LOG = os.path.join(DATA_DIR, "own_x_posts.json")  # persists on /data disk
+OWN_X_GAP_HOURS = 24
+
+
+def get_own_x_posts(limit=30):
+    return load_json(OWN_X_LOG, [])[-limit:]
+
+
+def _log_own_x_post(text, url):
+    posts = load_json(OWN_X_LOG, [])
+    posts.append({
+        "posted_at": datetime.now(timezone.utc).isoformat(),
+        "text": text, "url": url,
+    })
+    save_json(OWN_X_LOG, posts)
+
+
+def _hours_since_last_own_x():
+    posts = load_json(OWN_X_LOG, [])
+    if not posts:
+        return None
+    try:
+        last = datetime.fromisoformat(posts[-1]["posted_at"])
+        return (datetime.now(timezone.utc) - last).total_seconds() / 3600
+    except Exception:
+        return None
+
+
+def own_x_post_loop():
+    """Publish one original tweet per day in Nick's voice. The posted-log lives on
+    the persistent /data disk, so redeploys don't cause double-posting."""
+    log.info("Own X-post loop started (1/day).")
+    time.sleep(120)  # let the app settle after boot / avoid deploy-storm posts
+    while True:
+        try:
+            hrs = _hours_since_last_own_x()
+            if hrs is not None and hrs < OWN_X_GAP_HOURS:
+                wait_h = OWN_X_GAP_HOURS - hrs
+                log.info(f"Own X post: last was {hrs:.1f}h ago, sleeping {wait_h:.1f}h.")
+                time.sleep(wait_h * 3600)
+                continue
+
+            from generate_posts import generate_tweet
+            from knowledge_base import build_context
+            recent = [p.get("text", "") for p in load_json(OWN_X_LOG, [])]
+            try:
+                kb = build_context()
+            except Exception:
+                kb = ""
+            text = generate_tweet(recent, kb)
+            log.info(f"Own X post draft ({len(text)} chars): {text[:120]}")
+
+            import x_api
+            ok, res = x_api.post_tweet(text)
+            if ok:
+                _log_own_x_post(text, res)
+                log.info(f"Own X post PUBLISHED: {res}")
+            else:
+                log.warning(f"Own X post failed: {res}")
+
+            jitter = random.randint(-7200, 7200)  # +/- 2h so it isn't the same time daily
+            time.sleep(max(3600, OWN_X_GAP_HOURS * 3600 + jitter))
+        except Exception as e:
+            log.error(f"Own X-post loop error: {e}", exc_info=True)
+            time.sleep(3600)
+
+
 # ── Entry point ────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     threading.Thread(target=linkedin_loop, daemon=True, name="linkedin").start()
     threading.Thread(target=twitter_loop, daemon=True, name="twitter").start()
+    threading.Thread(target=own_x_post_loop, daemon=True, name="own_x_post").start()
 
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port)
