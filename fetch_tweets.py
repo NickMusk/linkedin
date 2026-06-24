@@ -1,10 +1,13 @@
 import time
 import json
 import os
+import logging
 from email.utils import parsedate_to_datetime
 from datetime import datetime, timezone, timedelta
 from apify_client import ApifyClient
 from config import APIFY_API_TOKEN, TWITTER_AUTH_TOKEN, TWITTER_CT0
+
+log = logging.getLogger(__name__)
 
 
 def _parse_tweet_date(created: str):
@@ -12,17 +15,21 @@ def _parse_tweet_date(created: str):
     native format ('Tue Jun 23 19:05:56 +0000 2026'), which datetime.fromisoformat
     does NOT accept — relying on it silently broke the age filter (it parsed on
     newer Python in unexpected ways / failed on older). Try ISO first, then the
-    Twitter/RFC-822 format. Returns an aware datetime or None if unparseable."""
+    Twitter/RFC-822 format. ALWAYS returns a tz-aware datetime (or None), so the
+    caller never hits a naive-vs-aware comparison TypeError across Python versions."""
     if not created:
         return None
+    dt = None
     try:
-        return datetime.fromisoformat(created.replace("Z", "+00:00"))
+        dt = datetime.fromisoformat(created.replace("Z", "+00:00"))
     except Exception:
-        pass
-    try:
-        return parsedate_to_datetime(created)
-    except Exception:
-        return None
+        try:
+            dt = parsedate_to_datetime(created)
+        except Exception:
+            return None
+    if dt is not None and dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
 
 MAX_TWEET_AGE_DAYS = 2
 SEEN_TWEETS_FILE = os.path.join(os.path.dirname(__file__), "seen_tweets.json")
@@ -103,15 +110,20 @@ def fetch_tweets() -> list[dict]:
                 url = item.get("url") or item.get("tweetUrl", "")
                 likes = item.get("likeCount", 0) or item.get("favoriteCount", 0) or 0
                 created = item.get("createdAt", "") or item.get("created_at", "")
-                tweet_date = _parse_tweet_date(created)
-                if tweet_date is not None and tweet_date < cutoff:
-                    continue
+                # Date handling must never discard a tweet or abort the keyword —
+                # only skip when we positively know it's too old.
+                try:
+                    tweet_date = _parse_tweet_date(created)
+                    if tweet_date is not None and tweet_date < cutoff:
+                        continue
+                except Exception:
+                    pass
                 if url and url not in seen and likes >= MIN_LIKES:
                     seen.add(url)
                     tweets.append(_normalize(item, keyword))
         except Exception as e:
             errors += 1
-            print(f"  Warning: failed for '{keyword}': {e}")
+            log.warning(f"Twitter fetch failed for '{keyword}': {type(e).__name__}: {e}")
         time.sleep(2)
 
     # Every keyword failed, or the scraper returned zero raw items across all of
@@ -121,8 +133,8 @@ def fetch_tweets() -> list[dict]:
     LAST_FETCH.update(keywords=len(TWITTER_KEYWORDS), errors=errors,
                       raw_items=raw_items, auth_suspect=auth_suspect)
     if auth_suspect:
-        print(f"  [fetch_tweets] SYSTEMIC FAILURE: {errors}/{len(TWITTER_KEYWORDS)} "
-              f"keywords errored, {raw_items} raw items. Twitter cookies likely expired.")
+        log.warning(f"[fetch_tweets] SYSTEMIC FAILURE: {errors}/{len(TWITTER_KEYWORDS)} "
+                    f"keywords errored, {raw_items} raw items.")
 
     _save_seen_tweets(seen)
     return tweets
