@@ -1416,14 +1416,21 @@ def own_x_post_loop():
                 time.sleep(wait_h * 3600)
                 continue
 
-            from generate_posts import generate_tweet
+            from generate_posts import generate_topical_tweet, extract_trending_topics
             from knowledge_base import build_context
             recent = [p.get("text", "") for p in load_json(OWN_X_LOG, [])]
             try:
                 kb = build_context()
             except Exception:
                 kb = ""
-            text = generate_tweet(recent, kb)
+            try:
+                from fetch_tweets import fetch_tweets
+                trending = extract_trending_topics(fetch_tweets())
+                log.info(f"Own X post: {len(trending)} trending topics for context.")
+            except Exception as e:
+                log.warning(f"Own X post: trending fetch failed ({e}); using personal fallback.")
+                trending = []
+            text = generate_topical_tweet(trending, recent, kb)
             log.info(f"Own X post draft ({len(text)} chars): {text[:120]}")
 
             import x_api

@@ -134,6 +134,7 @@ WRITE ONE TWEET. Hard rules:
 - Write in full, flowing sentences. NEVER use short chopped fragment sentences for effect (no "Not a visit. To stay." style). This is critical.
 - Specific beats general. Real experience beats theory.
 - No hashtags. No emoji. No "I'm excited to share". No dashes or em-dashes (use comma or period).
+- DO NOT invent specific dollar amounts, valuations, raise sizes, exit figures, or percentages. Only numbers that are real and safe (e.g. team grew 5 to 150, 12 years in recruiting). When unsure, make the point without a number.
 - Do not mention the current company by name (say "what I'm building"). Never say "sold to Fiverr".
 - Do not mention you're an AI.
 - One tweet only, no thread, no numbering, no quotes around it. Output ONLY the tweet text."""
@@ -186,6 +187,71 @@ def generate_tweet(recent_texts=None, kb_context: str = "") -> str:
     text = text[:280]
     cut = max(text.rfind(". "), text.rfind("\n"))
     return text[:cut + 1].strip() if cut > 100 else text.strip()
+
+
+TWEET_TOPICAL_SYSTEM_PROMPT = """You are Nick Nagatkin tweeting a sharp take on current tech news.
+
+Nick is a founder building an AI venture (AI recruiting), pre-seed, ex-staffing operator, lives in Dubai. His angle: practitioner who has actually built and sold a company, now in AI/hiring. He reacts to tech/startup/AI news with an opinionated, founder-to-founder take, not neutral commentary.
+
+You will be given TRENDING TOPICS pulled from X right now. Pick the ONE you have the strongest, most specific take on and write a tweet about it.
+
+Hard rules:
+- MAX 280 characters TOTAL, including hashtags. Shorter is fine.
+- Open with a sharp hook: a claim or a contrarian angle on the news. Never a bare question as the whole hook.
+- Have an actual opinion. Add the thing most people miss, or push back on the hype. Founder/operator lens.
+- DO NOT invent statistics, dollar amounts, percentages, valuations, or specific metrics. Only use a number if it appears in the provided topic text. When unsure, make the point without numbers.
+- Write in full flowing sentences. NEVER chopped fragment sentences for effect.
+- End with 2 to 3 relevant lowercase-or-camel hashtags (e.g. #AI #startups #fundraising #SaaS #hiring). Pick ones that fit the specific topic.
+- No emoji. No dashes or em-dashes (comma or period). No "thread", no numbering.
+- Do not name the current company. Do not say "sold to Fiverr". Do not mention you're an AI.
+- Output ONLY the tweet text (with the hashtags at the end)."""
+
+
+def generate_topical_tweet(topics, recent_texts=None, kb_context: str = "") -> str:
+    """Generate one original X post (<=280 chars) reacting to current tech news,
+    ending with 2-3 hashtags. `topics` is a list of trending-topic strings.
+    Falls back to the personal generate_tweet() if no topics are available."""
+    if not topics:
+        return generate_tweet(recent_texts, kb_context)
+
+    try:
+        from analyze_viral_posts import load_patterns_for_prompt
+        viral_patterns = load_patterns_for_prompt()
+    except Exception:
+        viral_patterns = ""
+
+    kb_text = f"# Nick's Knowledge Base\n\n{kb_context}" if kb_context else "# Nick"
+    if viral_patterns:
+        kb_text += f"\n\n---\n\n{viral_patterns}"
+
+    topics_block = "\n".join(f"- {t}" for t in topics[:15])
+    avoid = ""
+    if recent_texts:
+        joined = "\n".join(f"- {t[:120]}" for t in recent_texts[-15:])
+        avoid = f"\n\nDo NOT repeat the topic or angle of these recent tweets:\n{joined}"
+
+    cached_kb = [{"type": "text", "text": kb_text, "cache_control": {"type": "ephemeral"}}]
+    user_text = (
+        f"TRENDING TOPICS on X right now (with engagement):\n{topics_block}\n\n"
+        "Pick the one you have the sharpest take on and write Nick's tweet about it, "
+        "ending with 2 to 3 fitting hashtags. Ground it in the topic, do not invent numbers."
+        + avoid
+    )
+
+    for _ in range(3):
+        resp = _client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=400,
+            system=TWEET_TOPICAL_SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": cached_kb + [{"type": "text", "text": user_text}]}],
+        )
+        text = resp.content[0].text.strip().strip('"').strip()
+        text = text.replace(" — ", ", ").replace(" – ", ", ").replace("—", ", ").replace("–", ", ")
+        if 0 < len(text) <= 280:
+            return text
+    text = text[:280]
+    cut = text.rfind(" ")
+    return text[:cut].strip() if cut > 100 else text.strip()
 
 
 def extract_trending_topics(posts: list[dict]) -> list[str]:
