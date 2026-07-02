@@ -1,11 +1,45 @@
 import re
 import json
 import os
+import time
 import anthropic
 from config import ANTHROPIC_API_KEY, DATA_DIR
 from knowledge_base import build_context
 
 _client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+
+# Batch API = 50% cheaper on all token usage, at the cost of async (minutes) turnaround.
+# Off by default so it can be enabled + smoke-tested in prod without a code change.
+USE_BATCH_API = os.getenv("USE_BATCH_API", "").strip().lower() in ("1", "true", "yes", "on")
+
+# Cheap pre-filters that reject a post BEFORE spending a Claude call on it.
+# The model's own SKIP rules already cover these; catching the high-precision
+# ones here avoids paying for a full generation just to get back "SKIP".
+_HIRING_RE = re.compile(
+    r"(we['’\s]?re hiring|we are hiring|now hiring|hiring now|join (?:our|the) team|"
+    r"apply now|job opening|now accepting applications|send (?:us )?your (?:cv|resume)|#hiring)",
+    re.IGNORECASE,
+)
+
+
+def _looks_non_english(text: str) -> bool:
+    """True if the post is mostly a non-Latin script (Cyrillic, Hebrew, Arabic, CJK...).
+    Accented Latin (French/Spanish/German) stays under the threshold and passes through."""
+    letters = [c for c in text if c.isalpha()]
+    if len(letters) < 20:
+        return False
+    non_latin = sum(1 for c in letters if ord(c) > 0x024F)  # beyond Latin Extended-B
+    return non_latin / len(letters) > 0.30
+
+
+def _cheap_skip(post: dict, english_only: bool) -> str:
+    """Return a short reason string if the post can be skipped without an API call, else ''."""
+    text = post.get("text", "") or ""
+    if english_only and _looks_non_english(text):
+        return "non-English"
+    if _HIRING_RE.search(text):
+        return "job posting"
+    return ""
 
 REWRITE_PROMPT = """You are a style editor for LinkedIn comments. Your only job is to vary the sentence structure and opening format of a comment while preserving every insight and word choice.
 
@@ -177,6 +211,8 @@ def generate_comments(posts: list[dict], kb_context: str, system_prompt: str = N
     results = []
     recent_comments = _load_recent_comments(5)
     prompt = system_prompt or SYSTEM_PROMPT
+    # The generic prompt allows non-English replies; the default (Nick) and VC prompts are English-only.
+    english_only = prompt is not GENERIC_SYSTEM_PROMPT
 
     # Cache the knowledge base context across all calls
     cached_kb = [
@@ -187,9 +223,26 @@ def generate_comments(posts: list[dict], kb_context: str, system_prompt: str = N
         }
     ]
 
+    # Pass 1: cheap pre-filter — reject obvious skips with zero API cost.
+    generated = {}   # index -> (draft, reasoning)
+    to_generate = []
     for i, post in enumerate(posts):
-        print(f"  Generating comment {i+1}/{len(posts)}: {post['author'][:30]}")
-        draft, reasoning = _generate_one(post, cached_kb, system_prompt=prompt)
+        reason = _cheap_skip(post, english_only)
+        if reason:
+            print(f"  Pre-skip {i+1}/{len(posts)} ({reason}): {post['author'][:30]}")
+            generated[i] = ("SKIP", f"pre-filter: {reason}")
+        else:
+            to_generate.append(i)
+
+    # Pass 2: generate for the survivors (batched when enabled, else one call each).
+    gen_posts = [posts[i] for i in to_generate]
+    outputs = _generate_many(gen_posts, cached_kb, prompt)
+    for idx, out in zip(to_generate, outputs):
+        generated[idx] = out
+
+    # Pass 3: rewrite non-skips sequentially (each rewrite avoids the prior openings).
+    for i, post in enumerate(posts):
+        draft, reasoning = generated[i]
         skip = "SKIP" in draft.strip().upper().split() or draft.strip().upper() == "SKIP"
 
         if not skip:
@@ -200,6 +253,60 @@ def generate_comments(posts: list[dict], kb_context: str, system_prompt: str = N
         results.append({**post, "draft": draft, "reasoning": reasoning, "skip": skip})
 
     return results
+
+
+def _generate_many(posts: list[dict], cached_kb: list, system_prompt: str) -> list[tuple]:
+    """Return [(draft, reasoning), ...] aligned to posts. Uses the Batch API (50% cheaper)
+    when enabled and worthwhile, and falls back to sequential calls on any error."""
+    if not posts:
+        return []
+    if USE_BATCH_API and len(posts) > 1:
+        try:
+            return _generate_batch(posts, cached_kb, system_prompt)
+        except Exception as e:
+            print(f"  [batch failed, falling back to per-post calls] {e}")
+    return [_generate_one(p, cached_kb, system_prompt=system_prompt) for p in posts]
+
+
+def _generate_batch(posts: list[dict], cached_kb: list, system_prompt: str,
+                    max_wait: int = 900, poll: int = 15) -> list[tuple]:
+    """Submit all generations as one Message Batch (50% off), poll to completion, collect."""
+    reqs = [
+        {
+            "custom_id": f"c-{i}",
+            "params": {
+                "model": "claude-sonnet-4-6",
+                "max_tokens": 800,
+                "system": system_prompt,
+                "messages": [{"role": "user", "content": _build_user_content(post, cached_kb)}],
+            },
+        }
+        for i, post in enumerate(posts)
+    ]
+    batch = _client.messages.batches.create(requests=reqs)
+    print(f"  Batch {batch.id} submitted: {len(reqs)} comments")
+
+    waited = 0
+    while True:
+        b = _client.messages.batches.retrieve(batch.id)
+        if b.processing_status == "ended":
+            break
+        if waited >= max_wait:
+            try:
+                _client.messages.batches.cancel(batch.id)
+            except Exception:
+                pass
+            raise TimeoutError(f"batch {batch.id} not done after {max_wait}s")
+        time.sleep(poll)
+        waited += poll
+
+    out = {}
+    for result in _client.messages.batches.results(batch.id):
+        if result.result.type == "succeeded":
+            out[result.custom_id] = _parse_raw(result.result.message.content[0].text)
+        else:
+            out[result.custom_id] = ("SKIP", f"batch: {result.result.type}")
+    return [out.get(f"c-{i}", ("SKIP", "batch: missing")) for i in range(len(posts))]
 
 
 def _build_image_content(image_url: str) -> list:
@@ -219,8 +326,8 @@ def _build_image_content(image_url: str) -> list:
         return []
 
 
-def _generate_one(post: dict, cached_kb: list, system_prompt: str = None) -> tuple[str, str]:
-    system_prompt = system_prompt or SYSTEM_PROMPT
+def _build_user_content(post: dict, cached_kb: list) -> list:
+    """Assemble the user message content (cached KB + optional image + post block)."""
     score = post.get("engagement_score", post["likes"] + 3 * post["comments"])
     posted_at = post.get("posted_at", "")
     age_note = f" | Posted: {posted_at[:16].replace('T', ' ')} UTC" if posted_at else ""
@@ -236,45 +343,47 @@ def _generate_one(post: dict, cached_kb: list, system_prompt: str = None) -> tup
     user_content = cached_kb[:]
     image_url = post.get("image_url", "")
     image_blocks = _build_image_content(image_url) if image_url else []
+    image_note = (
+        "The image above is attached to this post. Use it to make the comment more specific if relevant.\n\n"
+        if image_blocks else ""
+    )
     if image_blocks:
         user_content += image_blocks
-        user_content.append({
-            "type": "text",
-            "text": (
-                f"The image above is attached to this post. Use it to make the comment more specific if relevant.\n\n"
-                f"Write a LinkedIn comment for this post. "
-                f"Then on a new line starting with 'REASONING:' explain in 1-2 sentences "
-                f"which specific experience/quote from the knowledge base you drew on and why.\n\n"
-                f"POST:\n{post_block}"
-            ),
-        })
-    else:
-        user_content.append({
-            "type": "text",
-            "text": (
-                f"Write a LinkedIn comment for this post. "
-                f"Then on a new line starting with 'REASONING:' explain in 1-2 sentences "
-                f"which specific experience/quote from the knowledge base you drew on and why.\n\n"
-                f"POST:\n{post_block}"
-            ),
-        })
+    user_content.append({
+        "type": "text",
+        "text": (
+            f"{image_note}"
+            f"Write a LinkedIn comment for this post. "
+            f"Then on a new line starting with 'REASONING:' explain in 1-2 sentences "
+            f"which specific experience/quote from the knowledge base you drew on and why.\n\n"
+            f"POST:\n{post_block}"
+        ),
+    })
+    return user_content
 
+
+def _parse_raw(raw: str) -> tuple:
+    """Split a raw model response into (comment, reasoning)."""
+    if "REASONING:" in raw:
+        parts = raw.split("REASONING:", 1)
+        return _strip_dashes(parts[0].strip()), parts[1].strip()
+    return _strip_dashes(raw.strip()), ""
+
+
+def _generate_one(post: dict, cached_kb: list, system_prompt: str = None) -> tuple[str, str]:
+    system_prompt = system_prompt or SYSTEM_PROMPT
     try:
         response = _client.messages.create(
             model="claude-sonnet-4-6",
             max_tokens=800,
             system=system_prompt,
-            messages=[{"role": "user", "content": user_content}],
+            messages=[{"role": "user", "content": _build_user_content(post, cached_kb)}],
         )
     except Exception as e:
         print(f"  [API error] {e}")
         return "SKIP", f"API error: {e}"
 
-    raw = response.content[0].text
-    if "REASONING:" in raw:
-        parts = raw.split("REASONING:", 1)
-        return _strip_dashes(parts[0].strip()), parts[1].strip()
-    return _strip_dashes(raw.strip()), ""
+    return _parse_raw(response.content[0].text)
 
 
 def _strip_dashes(text: str) -> str:

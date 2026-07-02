@@ -28,11 +28,29 @@ def build_context(kb_path: str = None) -> str:
     return "\n\n---\n\n".join(parts)
 
 
+# Cap the examples file so the cached KB prefix stops growing without bound.
+# Every cold run pays the full write cost for this content, so keep it to the
+# most recent N calibration examples.
+MAX_EXAMPLES = 40
+
+
 def save_example(post_excerpt: str, comment: str):
-    """Append a published LinkedIn post+comment pair to the examples file."""
+    """Append a published LinkedIn post+comment pair, keeping only the last MAX_EXAMPLES."""
     entry = f"POST:\n> {post_excerpt[:300].strip()}\n\nCOMMENT:\n{comment}\n\n---\n\n"
-    with open(EXAMPLES_PATH, "a", encoding="utf-8") as f:
-        f.write(entry)
+    existing = ""
+    if os.path.exists(EXAMPLES_PATH):
+        try:
+            with open(EXAMPLES_PATH, "r", encoding="utf-8") as f:
+                existing = f.read()
+        except Exception:
+            existing = ""
+
+    entries = [e for e in existing.split("\n\n---\n\n") if e.strip()]
+    entries.append(entry.strip())
+    entries = entries[-MAX_EXAMPLES:]
+
+    with open(EXAMPLES_PATH, "w", encoding="utf-8") as f:
+        f.write("\n\n---\n\n".join(entries) + "\n\n---\n\n")
 
 
 VIRAL_POSTS_PATH = os.path.join(DATA_DIR, "viral_posts_db.json")

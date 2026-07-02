@@ -930,7 +930,7 @@ def run_vc_session():
     from generate_comments import generate_comments, VC_SYSTEM_PROMPT
     from publish import _extract_activity_id, _get_social_id, _post_comment
     from fetch_posts import mark_url_published
-    from config import UNIPILE_ACCOUNT_ID, PUBLISH_DELAY_MIN, PUBLISH_DELAY_MAX
+    from config import UNIPILE_ACCOUNT_ID, PUBLISH_DELAY_MIN, PUBLISH_DELAY_MAX, MIN_LIKES
     import json as _json
 
     minutes_since = (time.time() - _vc_last_session_ts) / 60 if _vc_last_session_ts else 9999
@@ -952,6 +952,15 @@ def run_vc_session():
     posts = fetch_vc_posts(account_id=UNIPILE_ACCOUNT_ID)
     if not posts:
         log.info("VC: no new posts found.")
+        return 0
+
+    # Only engage with popular posts (>= MIN_LIKES), same bar as the main feed.
+    before = len(posts)
+    posts = [p for p in posts if p.get("likes", 0) >= MIN_LIKES]
+    if before != len(posts):
+        log.info(f"VC: {before - len(posts)} posts below {MIN_LIKES} likes filtered out ({len(posts)} left).")
+    if not posts:
+        log.info(f"VC: no posts with >= {MIN_LIKES} likes.")
         return 0
 
     d = session_dir()
@@ -1120,7 +1129,7 @@ def run_multi_account_sessions():
     from knowledge_base import build_context, save_example
     from generate_comments import generate_comments, GENERIC_SYSTEM_PROMPT, SYSTEM_PROMPT
     from publish import _extract_activity_id, _get_social_id, _post_comment
-    from config import UNIPILE_ACCOUNT_ID as NICK_ID, PUBLISH_DELAY_MIN, PUBLISH_DELAY_MAX
+    from config import UNIPILE_ACCOUNT_ID as NICK_ID, PUBLISH_DELAY_MIN, PUBLISH_DELAY_MAX, MIN_LIKES
     import json as _json
 
     try:
@@ -1144,7 +1153,9 @@ def run_multi_account_sessions():
 
         name = config.get("name") or account.get("name") or account_id[:12]
         daily_cap = config.get("daily_cap", 10)
-        min_likes = config.get("min_likes", 0)
+        min_likes = config.get("min_likes")
+        if min_likes is None:
+            min_likes = MIN_LIKES
 
         state = get_account_state(account_id)
         today = today_str()
