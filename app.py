@@ -917,6 +917,11 @@ def seconds_until_active(s):
     return max(60, int((target - now).total_seconds()))
 
 
+# VC watchlist commenting posts on low-reach VC posts and eats Nick's shared
+# daily budget (running first each cycle), starving the high-engagement feed
+# posts we actually want views on. Disabled to keep Nick on popular feed posts
+# (>=50 likes) only. Flip to True to re-enable.
+VC_ENABLED = False
 VC_DAILY_CAP = 15
 VC_SESSION_GAP_MIN = 240  # minutes between VC sessions
 _vc_last_session_ts = 0
@@ -1261,10 +1266,11 @@ def linkedin_loop():
                 continue
 
             last_session_ts = time.time()
-            try:
-                run_vc_session()
-            except Exception as e:
-                log.error(f"VC session error: {e}", exc_info=True)
+            if VC_ENABLED:
+                try:
+                    run_vc_session()
+                except Exception as e:
+                    log.error(f"VC session error: {e}", exc_info=True)
 
             try:
                 run_linkedin_session(s)
