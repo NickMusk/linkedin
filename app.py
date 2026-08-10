@@ -366,7 +366,13 @@ TEMPLATE = """
   </div>
 
   <!-- ── Twitter ── -->
-  <h2 class="text-xs font-semibold text-sky-400 uppercase tracking-widest mb-3">Twitter / X</h2>
+  <div class="flex items-center justify-between mb-3">
+    <h2 class="text-xs font-semibold text-sky-400 uppercase tracking-widest">Twitter / X</h2>
+    <div class="flex items-center gap-3">
+      <span id="tw-agent-status" class="text-xs text-gray-500"></span>
+      <button id="tw-agent-btn" class="bg-sky-800 hover:bg-sky-700 text-sky-200 text-xs rounded px-3 py-1.5 font-medium">▶ Launch Agent</button>
+    </div>
+  </div>
 
   <!-- Auto-loop status -->
   <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
@@ -526,6 +532,70 @@ document.addEventListener('click', function(e) {
     })
     .catch(() => { btn.disabled = false; btn.style.opacity = '1'; });
 });
+
+// ── Launch Agent: walk approved replies, open pre-filled X composer with
+//    random 10-60s gaps. Space (or the button) stops it. Full auto-click of
+//    the Post button on x.com needs the companion userscript at /agent.user.js
+//    (browsers forbid this page from driving another domain directly).
+const TW_APPROVED = {{ tw_queue | selectattr('status','eq','approved') | list | tojson }};
+const agent = {running: false, timer: null, queue: []};
+const agentBtn = document.getElementById('tw-agent-btn');
+const agentStatus = document.getElementById('tw-agent-status');
+
+function agentSet(msg) { agentStatus.textContent = msg; }
+
+function agentStop(msg) {
+  agent.running = false;
+  clearTimeout(agent.timer);
+  agentBtn.textContent = '▶ Launch Agent';
+  agentSet(msg || 'stopped');
+}
+
+document.addEventListener('keydown', function(e) {
+  if (e.code === 'Space' && agent.running) { e.preventDefault(); agentStop('stopped by Space'); }
+});
+
+agentBtn.addEventListener('click', function() {
+  if (agent.running) { agentStop('stopped'); return; }
+  agent.queue = TW_APPROVED.filter(it => document.getElementById('card-' + it.id));
+  if (!agent.queue.length) { agentSet('no approved replies — approve some first'); return; }
+  agent.running = true;
+  agentBtn.textContent = '■ Stop (Space)';
+  agentSet(agent.queue.length + ' approved queued...');
+  agentStep();
+});
+
+function agentStep() {
+  if (!agent.running) return;
+  const it = agent.queue.shift();
+  if (!it) { agentStop('done — all approved replies processed'); return; }
+
+  try { navigator.clipboard.writeText(it.reply); } catch (err) {}
+
+  const m = (it.tweet_url || '').match(/status\/(\d+)/);
+  const target = m
+    ? 'https://x.com/intent/post?in_reply_to=' + m[1] + '&text=' + encodeURIComponent(it.reply)
+    : it.tweet_url;
+  const w = window.open(target, 'tw_agent_tab');
+  if (!w) {
+    agent.queue.unshift(it);
+    agentStop('popup blocked — allow pop-ups for this site, then relaunch');
+    return;
+  }
+
+  fetch('/twitter/queue/' + it.id + '/posted', {method: 'POST'});
+  const card = document.getElementById('card-' + it.id);
+  if (card) {
+    card.style.opacity = '0.4';
+    const actionsDiv = card.querySelector('[data-actions]');
+    if (actionsDiv) actionsDiv.innerHTML = '<span class="text-xs text-green-400">Posted ✓ (agent)</span>';
+  }
+
+  if (!agent.queue.length) { agentStop('done — all approved replies processed'); return; }
+  const delay = 10000 + Math.floor(Math.random() * 50000);
+  agentSet('@' + (it.author_username || '') + ' opened, next in ' + Math.round(delay / 1000) + 's, ' + agent.queue.length + ' left — Space to stop');
+  agent.timer = setTimeout(agentStep, delay);
+}
 </script>
 
 </div>
@@ -579,6 +649,13 @@ def twitter_generate_loop():
         except Exception as e:
             log.error(f"Twitter generate loop error: {e}", exc_info=True)
         time.sleep(6 * 3600)
+
+
+@app.route("/agent.user.js")
+def agent_userscript():
+    from flask import send_file
+    return send_file(os.path.join(os.path.dirname(__file__), "assets", "x_auto_post.user.js"),
+                     mimetype="text/javascript")
 
 
 @app.route("/twitter/queue/<item_id>/approve", methods=["POST"])
