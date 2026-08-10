@@ -1355,6 +1355,7 @@ def twitter_loop():
                     settings=s,
                     log_fn=log_tw_reply,
                     update_status_fn=update_tw_status,
+                    queue_fn=add_to_tw_queue,
                 )
             except Exception as e:
                 log.error(f"Twitter session error: {e}", exc_info=True)
@@ -1469,7 +1470,12 @@ def own_x_post_loop():
 
 if __name__ == "__main__":
     threading.Thread(target=linkedin_loop, daemon=True, name="linkedin").start()
-    threading.Thread(target=twitter_loop, daemon=True, name="twitter").start()
+    # TW_AUTO_POST=1 → autonomous posting via X API; default is queue-only:
+    # drafts land in the dashboard, Nick approves and marks posted manually.
+    if os.environ.get("TW_AUTO_POST") == "1":
+        threading.Thread(target=twitter_loop, daemon=True, name="twitter").start()
+    else:
+        threading.Thread(target=twitter_generate_loop, daemon=True, name="twitter_gen").start()
     threading.Thread(target=own_x_post_loop, daemon=True, name="own_x_post").start()
 
     port = int(os.environ.get("PORT", 8080))

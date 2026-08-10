@@ -1,4 +1,5 @@
 import re
+import random
 import logging
 import anthropic
 from config import ANTHROPIC_API_KEY
@@ -23,6 +24,15 @@ Twitter reply style — different from LinkedIn:
 - Don't start with "Great tweet" or any compliment
 - Replies that add a contrasting data point or a "yeah but" do better than pure agreement
 
+LOW-EFFORT MODE:
+Some requests explicitly ask for a LOW-EFFORT reply. Those are required for the account to feel human, natural accounts alternate thoughtful replies with throwaway reactions. In low-effort mode:
+- Output only a lightweight reaction: "exactly", "lol", "this", "brutal", "yep", "100%", "wild", "true", "haha", "love this", a very short question, a one-line joke, a dry reaction, or a 2-5 word observation
+- It does NOT need to add information, never append an explanation or insight after it
+- GOOD: "brutal"  BAD: "brutal. this really shows how difficult distribution becomes as companies scale"
+- GOOD: "lol exactly"  BAD: "lol exactly. founders consistently underestimate this dynamic"
+- GOOD: "does this hold for enterprise?"  BAD: "interesting. does this hold for enterprise? I've found enterprise buyers behave differently"
+- All SKIP rules below still apply
+
 HARD RULES:
 - Max 280 characters ideally, never over 400
 - No em-dashes, hyphens between words. Use comma or period.
@@ -31,7 +41,7 @@ HARD RULES:
 - If the tweet is a job posting or promotional content, output exactly: SKIP
 - If the tweet mentions Fiverr or is from/about Fiverr, output exactly: SKIP
 - Never end the reply with a period
-- Output ONLY the reply text. Nothing else.
+- Output ONLY the reply text. Nothing else. Never prefix it with a label, header, or mode name (never output the words "LOW EFFORT")
 """
 
 
@@ -56,10 +66,15 @@ def generate_replies(tweets: list[dict], kb_context: str) -> list[dict]:
 
     results = []
     for i, tweet in enumerate(tweets):
-        print(f"  Generating reply {i+1}/{len(tweets)}: @{tweet.get('author_username', tweet['author'])[:25]}")
-        draft = _generate_one(tweet, cached_kb)
+        # ~25% of replies must be throwaway reactions ("lol", "brutal") — an
+        # all-insightful account reads as generated. Decided here, not by the
+        # model: each reply is a separate API call, so the model can't track
+        # the distribution itself.
+        low_effort = random.random() < 0.25
+        print(f"  Generating reply {i+1}/{len(tweets)}{' (low-effort)' if low_effort else ''}: @{tweet.get('author_username', tweet['author'])[:25]}")
+        draft = _generate_one(tweet, cached_kb, low_effort)
         skip = draft.strip().upper() == "SKIP"
-        results.append({**tweet, "draft": draft, "skip": skip})
+        results.append({**tweet, "draft": draft, "skip": skip, "low_effort": low_effort})
     return results
 
 
@@ -79,8 +94,13 @@ def _build_image_content(image_url: str) -> list:
         return []
 
 
-def _generate_one(tweet: dict, cached_kb: list) -> str:
+def _generate_one(tweet: dict, cached_kb: list, low_effort: bool = False) -> str:
     content_type = tweet.get("content_type", "text")
+    instruction = (
+        "Write a LOW-EFFORT Twitter reply for this tweet (see LOW-EFFORT MODE: throwaway reaction, short question, or one-line joke, no added insight):"
+        if low_effort
+        else "Write a Twitter reply for this tweet:"
+    )
     tweet_block = (
         f"@{tweet.get('author_username', '')} ({tweet['author']})\n"
         f"Likes: {tweet['likes']} | Replies: {tweet.get('replies', 0)} | Type: {content_type}\n\n"
@@ -93,12 +113,12 @@ def _generate_one(tweet: dict, cached_kb: list) -> str:
         user_content += image_blocks
         user_content.append({
             "type": "text",
-            "text": f"The image above is attached to this tweet. Use it if relevant.\n\nWrite a Twitter reply for this tweet:\n\n{tweet_block}",
+            "text": f"The image above is attached to this tweet. Use it if relevant.\n\n{instruction}\n\n{tweet_block}",
         })
     else:
         user_content.append({
             "type": "text",
-            "text": f"Write a Twitter reply for this tweet:\n\n{tweet_block}",
+            "text": f"{instruction}\n\n{tweet_block}",
         })
 
     try:
@@ -115,6 +135,9 @@ def _generate_one(tweet: dict, cached_kb: list) -> str:
 
 
 def _strip_dashes(text: str) -> str:
+    # The system prompt describes a "LOW-EFFORT MODE"; the model occasionally
+    # leaks that name as a header on the reply. Posting it would expose the bot.
+    text = re.sub(r'^\s*LOW[ -]?EFFORT( MODE)?[:.\s]*\n+', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\s*—\s*', ', ', text)
     text = re.sub(r'\s*–\s*', ', ', text)
     text = re.sub(r'\s*--\s*', ', ', text)

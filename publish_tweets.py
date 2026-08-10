@@ -73,10 +73,15 @@ def _post_reply(tweet_id: str, text: str) -> tuple:
     return x_api.reply(text, tweet_id)
 
 
-def run_twitter_session(settings: dict, log_fn=None, update_status_fn=None) -> int:
+def run_twitter_session(settings: dict, log_fn=None, update_status_fn=None,
+                        queue_fn=None) -> int:
     """
     Full Twitter session: fetch → generate → auto-publish.
     Returns number of replies posted.
+
+    queue_fn: optional callable(items) that stores drafts in the dashboard
+    queue. Used to salvage generated candidates when posting aborts (auth/credit
+    failure) — without it every generated reply is silently discarded.
     """
     from fetch_tweets import fetch_tweets
     from generate_replies import generate_replies
@@ -114,10 +119,12 @@ def run_twitter_session(settings: dict, log_fn=None, update_status_fn=None) -> i
         settings.get("tw_max_per_day", 20) - settings.get("_tw_today_count", 0),
     )
 
+    # Low-effort reactions ("brutal", "lol exactly") are intentionally short —
+    # the >= 20 length gate is a garbage filter for normal drafts only.
     candidates = [
         it for it in items
         if not it.get("skip")
-        and len(it.get("draft", "")) >= 20
+        and (it.get("low_effort") or len(it.get("draft", "")) >= 20)
         and not any(p in it.get("draft", "") for p in SKIP_PHRASES)
     ]
     # Many target tweets restrict replies (403). Try a larger pool than `budget`
@@ -142,7 +149,18 @@ def run_twitter_session(settings: dict, log_fn=None, update_status_fn=None) -> i
     posted = 0
     skipped_restricted = 0
 
-    for item in candidates:
+    def _salvage_to_queue(remaining: list):
+        if not queue_fn or not remaining:
+            return
+        for it in remaining:
+            it["tweet_url"] = it.get("url", "")
+        try:
+            queue_fn(remaining)
+            log.info(f"Twitter: salvaged {len(remaining)} unposted drafts to dashboard queue.")
+        except Exception as e:
+            log.warning(f"Twitter: queue salvage failed: {e}")
+
+    for idx, item in enumerate(candidates):
         if posted >= budget:
             break
         tweet_id = _extract_tweet_id(item["url"])
@@ -183,12 +201,14 @@ def run_twitter_session(settings: dict, log_fn=None, update_status_fn=None) -> i
             if update_status_fn:
                 update_status_fn(state="credits_depleted", auth_ok=False,
                                  last_auth_error="credits depleted: " + detail[:250])
+            _salvage_to_queue(candidates[idx:])
             return posted
         elif _is_auth_failure(detail):
             log.error(f"    AUTH FAILURE: {detail}")
             if update_status_fn:
                 update_status_fn(state="auth_error", auth_ok=False,
                                  last_auth_error=detail[:300])
+            _salvage_to_queue(candidates[idx:])
             return posted
         elif _is_reply_restriction(detail):
             skipped_restricted += 1

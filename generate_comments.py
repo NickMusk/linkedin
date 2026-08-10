@@ -2,6 +2,7 @@ import re
 import json
 import os
 import time
+import random
 import anthropic
 from config import ANTHROPIC_API_KEY, DATA_DIR
 from knowledge_base import build_context
@@ -116,6 +117,15 @@ E) Zoom on one detail — when the post has multiple items or data points, pick 
 
 Choose the template that fits the post best. Vary across comments — do not default to template A every time.
 
+LOW-EFFORT MODE:
+Some requests explicitly ask for a LOW-EFFORT comment. Those are required for the account to feel human — real accounts alternate thoughtful comments with lightweight reactions. In low-effort mode:
+- Output only a lightweight reaction: "lol", "brutal", "this", "so true", "wild", "haha", a very short question, a one-line joke, or a 2-5 word dry observation
+- It must NOT add information. NEVER append an explanation or insight after the reaction.
+- GOOD: "brutal"  BAD: "brutal. this is exactly why distribution gets harder at scale"
+- GOOD: "does this hold for enterprise?"  BAD: "does this hold for enterprise? enterprise buyers behave differently in my experience"
+- Ignore the OPENING TEMPLATES and the challenge-by-default rule in this mode
+- All SKIP rules below still apply
+
 IDENTITY rules:
 - Never mention the name of Nick's current company. Say "our project", "what we're building", "our current venture", etc.
 - Mention Digiscorp at most ONCE per comment, and only when it adds a concrete data point. Prefer vaguer references like "when I ran the staffing business", "from 12 years in recruiting", "after thousands of hires", "when we were scaling the team" — vary it each time. Never lead with "At Digiscorp we..."
@@ -127,7 +137,7 @@ HARD rules:
 - English only
 - Never mention you're an AI or that this was generated
 - NEVER use dashes, hyphens, or em-dashes of any kind (-, --, —). Replace them with a comma or period — whichever keeps the sentence readable. Never just delete the dash and leave two clauses running together without punctuation.
-- Output ONLY the comment text. No preamble like "Here is the comment:", no meta-commentary, nothing before or after the comment itself.
+- Output ONLY the comment text. No preamble like "Here is the comment:", no meta-commentary, nothing before or after the comment itself. Never prefix it with a label, header, or mode name (never output the words "LOW EFFORT").
 - NEVER mention "sold my company to Fiverr", "5000+ hires", "thousands of hires", or any credential flex. If Nick's experience is relevant, reference it obliquely: "I've seen this pattern", "running a team through this", "in recruiting" — no bragging openers.
 - When outputting SKIP for any reason: output the single word SKIP and nothing else. No explanation, no preceding text, no "I can't see the image", nothing. Just: SKIP
 - NEVER comment on job postings. If the post is primarily a hiring announcement or job description, output exactly: SKIP
@@ -234,43 +244,61 @@ def generate_comments(posts: list[dict], kb_context: str, system_prompt: str = N
         else:
             to_generate.append(i)
 
+    # 20-30% of Nick's comments must be throwaway reactions ("lol", "brutal") —
+    # an all-insightful account reads as generated. Decided here, not by the
+    # model: each comment is a separate API call, so the model can't track the
+    # distribution itself. Only for Nick's own prompt, not generic/VC accounts.
+    low_flags = {
+        i: (prompt is SYSTEM_PROMPT and random.random() < 0.25)
+        for i in to_generate
+    }
+
     # Pass 2: generate for the survivors (batched when enabled, else one call each).
     gen_posts = [posts[i] for i in to_generate]
-    outputs = _generate_many(gen_posts, cached_kb, prompt)
+    outputs = _generate_many(gen_posts, cached_kb, prompt, [low_flags[i] for i in to_generate])
     for idx, out in zip(to_generate, outputs):
         generated[idx] = out
 
     # Pass 3: rewrite non-skips sequentially (each rewrite avoids the prior openings).
+    # Low-effort reactions are published as-is: rewriting "brutal" defeats the point.
     for i, post in enumerate(posts):
         draft, reasoning = generated[i]
         skip = "SKIP" in draft.strip().upper().split() or draft.strip().upper() == "SKIP"
+        low_effort = low_flags.get(i, False)
 
-        if not skip:
+        if not skip and not low_effort:
             print(f"    Rewriting...")
             draft = _rewrite_one(draft, recent_comments)
             recent_comments = (recent_comments + [draft])[-5:]
 
-        results.append({**post, "draft": draft, "reasoning": reasoning, "skip": skip})
+        results.append({**post, "draft": draft, "reasoning": reasoning, "skip": skip, "low_effort": low_effort})
 
     return results
 
 
-def _generate_many(posts: list[dict], cached_kb: list, system_prompt: str) -> list[tuple]:
+def _generate_many(posts: list[dict], cached_kb: list, system_prompt: str,
+                   low_flags: list[bool] = None) -> list[tuple]:
     """Return [(draft, reasoning), ...] aligned to posts. Uses the Batch API (50% cheaper)
     when enabled and worthwhile, and falls back to sequential calls on any error."""
     if not posts:
         return []
+    if low_flags is None:
+        low_flags = [False] * len(posts)
     if USE_BATCH_API and len(posts) > 1:
         try:
-            return _generate_batch(posts, cached_kb, system_prompt)
+            return _generate_batch(posts, cached_kb, system_prompt, low_flags)
         except Exception as e:
             print(f"  [batch failed, falling back to per-post calls] {e}")
-    return [_generate_one(p, cached_kb, system_prompt=system_prompt) for p in posts]
+    return [_generate_one(p, cached_kb, system_prompt=system_prompt, low_effort=low)
+            for p, low in zip(posts, low_flags)]
 
 
 def _generate_batch(posts: list[dict], cached_kb: list, system_prompt: str,
+                    low_flags: list[bool] = None,
                     max_wait: int = 900, poll: int = 15) -> list[tuple]:
     """Submit all generations as one Message Batch (50% off), poll to completion, collect."""
+    if low_flags is None:
+        low_flags = [False] * len(posts)
     reqs = [
         {
             "custom_id": f"c-{i}",
@@ -278,10 +306,10 @@ def _generate_batch(posts: list[dict], cached_kb: list, system_prompt: str,
                 "model": "claude-sonnet-4-6",
                 "max_tokens": 800,
                 "system": system_prompt,
-                "messages": [{"role": "user", "content": _build_user_content(post, cached_kb)}],
+                "messages": [{"role": "user", "content": _build_user_content(post, cached_kb, low_effort=low)}],
             },
         }
-        for i, post in enumerate(posts)
+        for i, (post, low) in enumerate(zip(posts, low_flags))
     ]
     batch = _client.messages.batches.create(requests=reqs)
     print(f"  Batch {batch.id} submitted: {len(reqs)} comments")
@@ -326,7 +354,7 @@ def _build_image_content(image_url: str) -> list:
         return []
 
 
-def _build_user_content(post: dict, cached_kb: list) -> list:
+def _build_user_content(post: dict, cached_kb: list, low_effort: bool = False) -> list:
     """Assemble the user message content (cached KB + optional image + post block)."""
     score = post.get("engagement_score", post["likes"] + 3 * post["comments"])
     posted_at = post.get("posted_at", "")
@@ -349,15 +377,18 @@ def _build_user_content(post: dict, cached_kb: list) -> list:
     )
     if image_blocks:
         user_content += image_blocks
+    instruction = (
+        "Write a LOW-EFFORT LinkedIn comment for this post (see LOW-EFFORT MODE: throwaway "
+        "reaction, short question, or one-line joke — no added insight or explanation). "
+        "Do not include a REASONING line."
+        if low_effort
+        else "Write a LinkedIn comment for this post. "
+        "Then on a new line starting with 'REASONING:' explain in 1-2 sentences "
+        "which specific experience/quote from the knowledge base you drew on and why."
+    )
     user_content.append({
         "type": "text",
-        "text": (
-            f"{image_note}"
-            f"Write a LinkedIn comment for this post. "
-            f"Then on a new line starting with 'REASONING:' explain in 1-2 sentences "
-            f"which specific experience/quote from the knowledge base you drew on and why.\n\n"
-            f"POST:\n{post_block}"
-        ),
+        "text": f"{image_note}{instruction}\n\nPOST:\n{post_block}",
     })
     return user_content
 
@@ -370,14 +401,15 @@ def _parse_raw(raw: str) -> tuple:
     return _strip_dashes(raw.strip()), ""
 
 
-def _generate_one(post: dict, cached_kb: list, system_prompt: str = None) -> tuple[str, str]:
+def _generate_one(post: dict, cached_kb: list, system_prompt: str = None,
+                  low_effort: bool = False) -> tuple[str, str]:
     system_prompt = system_prompt or SYSTEM_PROMPT
     try:
         response = _client.messages.create(
             model="claude-sonnet-4-6",
             max_tokens=800,
             system=system_prompt,
-            messages=[{"role": "user", "content": _build_user_content(post, cached_kb)}],
+            messages=[{"role": "user", "content": _build_user_content(post, cached_kb, low_effort=low_effort)}],
         )
     except Exception as e:
         print(f"  [API error] {e}")
@@ -387,6 +419,9 @@ def _generate_one(post: dict, cached_kb: list, system_prompt: str = None) -> tup
 
 
 def _strip_dashes(text: str) -> str:
+    # The system prompt describes a "LOW-EFFORT MODE"; the model occasionally
+    # leaks that name as a header on the comment. Posting it would expose the bot.
+    text = re.sub(r'^\s*LOW[ -]?EFFORT( MODE)?[:.\s]*\n+', '', text, flags=re.IGNORECASE)
     # Replace em-dash and en-dash with comma+space (preserves clause separation)
     text = re.sub(r'\s*—\s*', ', ', text)
     text = re.sub(r'\s*–\s*', ', ', text)
