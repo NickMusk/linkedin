@@ -34,7 +34,7 @@ Some requests explicitly ask for a LOW-EFFORT reply. Those are required for the 
 - All SKIP rules below still apply
 
 HARD RULES:
-- Max 280 characters ideally, never over 400
+- HARD LIMIT: max 270 characters. X disables the Post button above 280, an over-limit reply cannot be published at all. If the point does not fit, make a shorter, simpler point
 - No em-dashes, hyphens between words. Use comma or period.
 - No credential flex ("after 5000 hires", "when I sold my company")
 - Never quote the author's phrase back at them
@@ -128,7 +128,25 @@ def _generate_one(tweet: dict, cached_kb: list, low_effort: bool = False) -> str
             system=SYSTEM_PROMPT,
             messages=[{"role": "user", "content": user_content}],
         )
-        return _strip_dashes(response.content[0].text.strip())
+        draft = _strip_dashes(response.content[0].text.strip())
+        # X hard-disables Post above 280 chars, so an over-limit draft is
+        # unpublishable. One shorten retry, then give up on the tweet.
+        if len(draft) > 280 and draft.strip().upper() != "SKIP":
+            retry = _client.messages.create(
+                model="claude-sonnet-4-6",
+                max_tokens=200,
+                system=SYSTEM_PROMPT,
+                messages=[
+                    {"role": "user", "content": user_content},
+                    {"role": "assistant", "content": draft},
+                    {"role": "user", "content": "This reply is over the 280 character limit and cannot be posted. Rewrite it under 270 characters, same idea, tighter. Output only the reply text."},
+                ],
+            )
+            draft = _strip_dashes(retry.content[0].text.strip())
+            if len(draft) > 280:
+                log.warning(f"  [reply too long after retry: {len(draft)} chars] skipping")
+                return "SKIP"
+        return draft
     except Exception as e:
         log.warning(f"  [reply API error] {e}")
         return "SKIP"

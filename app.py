@@ -538,7 +538,10 @@ document.addEventListener('click', function(e) {
 //    the Post button on x.com needs the companion userscript at /agent.user.js
 //    (browsers forbid this page from driving another domain directly).
 const TW_APPROVED = {{ tw_queue | selectattr('status','eq','approved') | list | tojson }};
-const agent = {running: false, timer: null, queue: []};
+// current: item opened on X and not yet confirmed by the userscript.
+// userscriptSeen: once true, we require explicit confirmations instead of
+// optimistically marking items posted (semi-manual mode has no userscript).
+const agent = {running: false, timer: null, queue: [], current: null, waited: 0, userscriptSeen: false};
 const agentBtn = document.getElementById('tw-agent-btn');
 const agentStatus = document.getElementById('tw-agent-status');
 
@@ -551,6 +554,33 @@ function agentStop(msg) {
   agentSet(msg || 'stopped');
 }
 
+function agentMarkPosted(it) {
+  fetch('/twitter/queue/' + it.id + '/posted', {method: 'POST'});
+  const card = document.getElementById('card-' + it.id);
+  if (card) {
+    card.style.opacity = '0.4';
+    const actionsDiv = card.querySelector('[data-actions]');
+    if (actionsDiv) actionsDiv.innerHTML = '<span class="text-xs text-green-400">Posted ✓ (agent)</span>';
+  }
+}
+
+window.addEventListener('message', function(e) {
+  const d = e.data || {};
+  if (d.source !== 'x-agent') return;
+  agent.userscriptSeen = true;
+  if (!agent.running || !agent.current) return;
+  const it = agent.current;
+  if (d.status === 'posted') {
+    agent.current = null;
+    agentMarkPosted(it);
+  } else {  // failed / cancelled — put item back and stop for a human
+    agent.current = null;
+    agent.queue.unshift(it);
+    clearTimeout(agent.timer);
+    agentStop('@' + (it.author_username || '') + ' NOT posted (' + (d.reason || d.status) + ') — fix manually, then relaunch');
+  }
+});
+
 document.addEventListener('keydown', function(e) {
   if (e.code === 'Space' && agent.running) { e.preventDefault(); agentStop('stopped by Space'); }
 });
@@ -560,6 +590,8 @@ agentBtn.addEventListener('click', function() {
   agent.queue = TW_APPROVED.filter(it => document.getElementById('card-' + it.id));
   if (!agent.queue.length) { agentSet('no approved replies — approve some first'); return; }
   agent.running = true;
+  agent.current = null;
+  agent.waited = 0;
   agentBtn.textContent = '■ Stop (Space)';
   agentSet(agent.queue.length + ' approved queued...');
   agentStep();
@@ -567,6 +599,29 @@ agentBtn.addEventListener('click', function() {
 
 function agentStep() {
   if (!agent.running) return;
+
+  // Previous item still unconfirmed. With the userscript active, wait for its
+  // verdict (up to ~80s — it gives up at 60s and reports failure); without it,
+  // fall back to the old optimistic behavior.
+  if (agent.current) {
+    if (agent.userscriptSeen) {
+      agent.waited++;
+      if (agent.waited <= 16) {
+        agentSet('waiting for @' + (agent.current.author_username || '') + ' post confirmation... (Space to stop)');
+        agent.timer = setTimeout(agentStep, 5000);
+        return;
+      }
+      const stuck = agent.current;
+      agent.current = null;
+      agent.queue.unshift(stuck);
+      agentStop('no confirmation for @' + (stuck.author_username || '') + ' — check the X tab, then relaunch');
+      return;
+    }
+    agentMarkPosted(agent.current);
+    agent.current = null;
+  }
+  agent.waited = 0;
+
   const it = agent.queue.shift();
   if (!it) { agentStop('done — all approved replies processed'); return; }
 
@@ -582,16 +637,8 @@ function agentStep() {
     agentStop('popup blocked — allow pop-ups for this site, then relaunch');
     return;
   }
+  agent.current = it;
 
-  fetch('/twitter/queue/' + it.id + '/posted', {method: 'POST'});
-  const card = document.getElementById('card-' + it.id);
-  if (card) {
-    card.style.opacity = '0.4';
-    const actionsDiv = card.querySelector('[data-actions]');
-    if (actionsDiv) actionsDiv.innerHTML = '<span class="text-xs text-green-400">Posted ✓ (agent)</span>';
-  }
-
-  if (!agent.queue.length) { agentStop('done — all approved replies processed'); return; }
   const delay = 10000 + Math.floor(Math.random() * 50000);
   agentSet('@' + (it.author_username || '') + ' opened, next in ' + Math.round(delay / 1000) + 's, ' + agent.queue.length + ' left — Space to stop');
   agent.timer = setTimeout(agentStep, delay);
@@ -649,6 +696,12 @@ def twitter_generate_loop():
         except Exception as e:
             log.error(f"Twitter generate loop error: {e}", exc_info=True)
         time.sleep(6 * 3600)
+
+
+@app.route("/twitter/queue.json")
+def twitter_queue_json():
+    from flask import jsonify
+    return jsonify(get_tw_queue())
 
 
 @app.route("/agent.user.js")
