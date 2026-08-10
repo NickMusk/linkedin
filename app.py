@@ -585,9 +585,18 @@ document.addEventListener('keydown', function(e) {
   if (e.code === 'Space' && agent.running) { e.preventDefault(); agentStop('stopped by Space'); }
 });
 
+// Snowflake tweet IDs grow with time — sort key for newest-first ordering
+// (tweet_posted_at formats vary by scraper, IDs don't lie).
+function agentTweetKey(it) {
+  const m = (it.tweet_url || '').match(/status\/(\d+)/);
+  return m ? m[1].padStart(25, '0') : '';
+}
+
 agentBtn.addEventListener('click', function() {
   if (agent.running) { agentStop('stopped'); return; }
-  agent.queue = TW_APPROVED.filter(it => document.getElementById('card-' + it.id));
+  agent.queue = TW_APPROVED
+    .filter(it => document.getElementById('card-' + it.id))
+    .sort((a, b) => agentTweetKey(b).localeCompare(agentTweetKey(a)));
   if (!agent.queue.length) { agentSet('no approved replies — approve some first'); return; }
   agent.running = true;
   agent.current = null;
