@@ -565,6 +565,7 @@ function agentMarkPosted(it) {
 }
 
 window.addEventListener('message', function(e) {
+  if (e.origin !== 'https://x.com' && e.origin !== 'https://twitter.com') return;
   const d = e.data || {};
   if (d.source !== 'x-agent') return;
   agent.userscriptSeen = true;
