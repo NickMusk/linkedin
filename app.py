@@ -34,6 +34,7 @@ _PREV_DEFAULTS = {
     "tw_max_per_day": 50, "tw_max_per_session": 15, "tw_gap_min": 45, "tw_gap_max": 120,
     "tw_reply_delay_min": 180, "tw_reply_delay_max": 240,
     "tw_reply_delay_min": 120, "tw_reply_delay_max": 360,
+    "tw_max_per_day": 3, "tw_max_per_session": 1,
 }
 
 DEFAULT_SETTINGS = {
@@ -44,9 +45,9 @@ DEFAULT_SETTINGS = {
     "active_end":      21,
     "gap_min":        150,
     "gap_max":        240,
-    # Twitter — 3/day, 1/session, gaps 3–4h
-    "tw_max_per_day":      3,
-    "tw_max_per_session":  1,
+    # Twitter — 20/day, 20/session, gaps 3–4h
+    "tw_max_per_day":     20,
+    "tw_max_per_session": 20,
     "tw_gap_min":        180,
     "tw_gap_max":        240,
     "tw_reply_delay_min":  60,
