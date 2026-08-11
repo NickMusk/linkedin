@@ -415,7 +415,14 @@ TEMPLATE = """
     {% for it in (approved + pending)|sort(attribute='generated_at', reverse=True) %}
     <div id="card-{{ it.id }}" class="bg-gray-900 rounded-xl p-4 {% if it.status == 'approved' %}border border-sky-800{% endif %}">
       <div class="flex items-center gap-3 mb-3">
+        {# Main link opens X's composer with the reply pre-filled — just hit Post.
+           No #xagent marker, so the userscript stays hands-off on manual opens. #}
+        {% if 'status/' in (it.tweet_url or '') %}
+        <a href="https://x.com/intent/post?in_reply_to={{ it.tweet_url.split('status/')[-1].split('?')[0].split('/')[0] }}&text={{ it.reply | urlencode }}" target="_blank" class="text-sky-400 hover:text-sky-300 text-xs font-semibold">@{{ it.author_username }}</a>
+        <a href="{{ it.tweet_url }}" target="_blank" class="text-xs text-gray-600 hover:text-gray-400">tweet ↗</a>
+        {% else %}
         <a href="{{ it.tweet_url }}" target="_blank" class="text-sky-400 hover:text-sky-300 text-xs font-semibold">@{{ it.author_username }}</a>
+        {% endif %}
         <span class="text-xs text-gray-600">{{ (it.tweet_posted_at or it.generated_at or '')[:10] }}</span>
         <span class="text-xs text-gray-600">{{ it.likes or '' }}{% if it.likes %} likes{% endif %}</span>
         <span data-badge class="ml-auto text-xs px-2 py-0.5 rounded-full {% if it.status == 'approved' %}bg-sky-900 text-sky-300{% else %}bg-gray-800 text-yellow-400{% endif %}">
@@ -639,8 +646,10 @@ function agentStep() {
   try { navigator.clipboard.writeText(it.reply); } catch (err) {}
 
   const m = (it.tweet_url || '').match(/status\/(\d+)/);
+  // #xagent tells the userscript this open came from the agent (auto-post);
+  // manual card links omit it, so there the human presses Post.
   const target = m
-    ? 'https://x.com/intent/post?in_reply_to=' + m[1] + '&text=' + encodeURIComponent(it.reply)
+    ? 'https://x.com/intent/post?in_reply_to=' + m[1] + '&text=' + encodeURIComponent(it.reply) + '#xagent'
     : it.tweet_url;
   const w = window.open(target, 'tw_agent_tab');
   if (!w) {

@@ -1,21 +1,23 @@
 // ==UserScript==
 // @name         X Agent Auto-Post (linkedin-commenter)
 // @namespace    linkedin-commenter
-// @version      1.2
+// @version      1.3
 // @description  Auto-clicks Post on the x.com composer opened by the dashboard Launch Agent. Esc cancels the current post. Reports the outcome back to the dashboard tab.
 // @match        https://x.com/*
 // @match        https://twitter.com/*
 // @grant        none
 // ==/UserScript==
 (function () {
-  // Arm only in agent context: the dashboard opens /intent/post URLs. X's SPA
-  // often redirects that to another URL before we can click — the sessionStorage
-  // flag survives the redirect (same tab), so the script re-arms there. On
-  // normal X browsing the flag is absent and this script exits immediately.
+  // Arm only for agent-opened composers: the dashboard agent appends #xagent to
+  // its /intent/post URLs. Manual card links open the same pre-filled composer
+  // WITHOUT the marker — there the human presses Post, we never auto-click.
+  // X's SPA often redirects the intent URL before we can click — the
+  // sessionStorage flag survives the redirect (same tab), so the script
+  // re-arms there. On normal X browsing the flag is absent and we exit.
   const isIntent = location.pathname.indexOf('/intent/') === 0;
-  if (isIntent) sessionStorage.setItem('x-agent-armed', String(Date.now()));
+  if (isIntent && location.hash === '#xagent') sessionStorage.setItem('x-agent-armed', String(Date.now()));
   const armedTs = +(sessionStorage.getItem('x-agent-armed') || 0);
-  if (!isIntent && (!armedTs || Date.now() - armedTs > 120000)) return;
+  if (!armedTs || Date.now() - armedTs > 120000) return;
 
   let cancelled = false;
   let clickedAt = 0;
