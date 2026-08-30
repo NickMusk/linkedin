@@ -1637,7 +1637,12 @@ if __name__ == "__main__":
         threading.Thread(target=twitter_loop, daemon=True, name="twitter").start()
     else:
         threading.Thread(target=twitter_generate_loop, daemon=True, name="twitter_gen").start()
-    threading.Thread(target=own_x_post_loop, daemon=True, name="own_x_post").start()
+    # OWN_X_POST=0 → no autonomous own-tweet posting (auto-replies/comments
+    # are unaffected — they run through the queue + local browser poster).
+    if os.environ.get("OWN_X_POST", "1") == "1":
+        threading.Thread(target=own_x_post_loop, daemon=True, name="own_x_post").start()
+    else:
+        log.info("Own X-post loop disabled (OWN_X_POST=0).")
 
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port)
