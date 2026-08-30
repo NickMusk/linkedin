@@ -1078,11 +1078,11 @@ def seconds_until_active(s):
     return max(60, int((target - now).total_seconds()))
 
 
-# VC watchlist commenting posts on low-reach VC posts and eats Nick's shared
-# daily budget (running first each cycle), starving the high-engagement feed
-# posts we actually want views on. Disabled to keep Nick on popular feed posts
-# (>=50 likes) only. Flip to True to re-enable.
-VC_ENABLED = False
+# VC watchlist commenting: runs FIRST each cycle — replies to the VC people
+# from the fundraising sheet (merged into the watchlist automatically) are
+# the priority, ahead of the high-engagement feed. VC_DAILY_CAP keeps it from
+# starving the feed budget entirely.
+VC_ENABLED = True
 VC_DAILY_CAP = 15
 VC_SESSION_GAP_MIN = 240  # minutes between VC sessions
 _vc_last_session_ts = 0
@@ -1120,14 +1120,9 @@ def run_vc_session():
         log.info("VC: no new posts found.")
         return 0
 
-    # Only engage with popular posts (>= MIN_LIKES), same bar as the main feed.
-    before = len(posts)
-    posts = [p for p in posts if p.get("likes", 0) >= MIN_LIKES]
-    if before != len(posts):
-        log.info(f"VC: {before - len(posts)} posts below {MIN_LIKES} likes filtered out ({len(posts)} left).")
-    if not posts:
-        log.info(f"VC: no posts with >= {MIN_LIKES} likes.")
-        return 0
+    # No like threshold here: these are the fundraising target VCs — the
+    # author matters, not the post's reach (unlike the main feed's MIN_LIKES
+    # bar). VC_DAILY_CAP still bounds the spend.
 
     d = session_dir()
     save_posts(posts, d)

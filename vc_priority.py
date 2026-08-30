@@ -34,27 +34,41 @@ _FALLBACK_HANDLES = [
 ]
 
 
-def _fetch_from_sheet() -> list[str]:
+_LINKEDIN_RE = re.compile(r"linkedin\.com/in/([A-Za-z0-9\-_%]+)/?", re.IGNORECASE)
+
+
+def _fetch_from_sheet() -> dict:
     with urllib.request.urlopen(SHEET_CSV_URL, timeout=20) as resp:
         data = resp.read().decode("utf-8")
-    handles = []
+    handles, linkedin = [], []
+    li_seen = set()
     for row in csv.DictReader(io.StringIO(data)):
         m = _PROFILE_RE.match((row.get("X ссылка") or "").strip())
         if m:
             handles.append(m.group(1).lower())
-    return sorted(set(handles))
+        lm = _LINKEDIN_RE.search((row.get("LinkedIn") or "").strip())
+        if lm and lm.group(1).lower() not in li_seen:
+            li_seen.add(lm.group(1).lower())
+            linkedin.append({
+                "name": (row.get("Партнер") or "").strip(),
+                "fund": (row.get("Фонд") or "").strip(),
+                "linkedin_url": f"https://www.linkedin.com/in/{lm.group(1)}/",
+            })
+    return {"handles": sorted(set(handles)), "linkedin": linkedin}
 
 
-_memo = {"ts": 0.0, "handles": None}
+_memo = {"ts": 0.0, "data": None}
 
 
-def get_vc_handles() -> set[str]:
-    """Lowercased X handles from the sheet, cached with a 6h TTL."""
-    # In-process memo first: is_vc() is called per queue item, and the disk
-    # cache may be unwritable (read-only container) — never refetch the sheet
-    # more than once per TTL within one process.
-    if _memo["handles"] is not None and time.time() - _memo["ts"] < CACHE_TTL:
-        return _memo["handles"]
+def _get_sheet_data() -> dict:
+    """{"handles": [...], "linkedin": [...]} from the sheet, cached 6h.
+
+    In-process memo first: is_vc() is called per queue item, and the disk
+    cache may be unwritable (read-only container) — never refetch the sheet
+    more than once per TTL within one process.
+    """
+    if _memo["data"] is not None and time.time() - _memo["ts"] < CACHE_TTL:
+        return _memo["data"]
     cached = None
     if os.path.exists(CACHE_FILE):
         try:
@@ -62,18 +76,34 @@ def get_vc_handles() -> set[str]:
                 cached = json.load(f)
         except Exception:
             cached = None
-    if cached and time.time() - cached.get("ts", 0) < CACHE_TTL:
-        return set(cached["handles"])
-    try:
-        handles = _fetch_from_sheet()
-        with open(CACHE_FILE, "w") as f:
-            json.dump({"ts": time.time(), "handles": handles}, f)
-        return set(handles)
-    except Exception as e:
-        log.warning(f"vc_priority: sheet fetch failed ({e}), using stale cache/fallback")
-        if cached:
-            return set(cached["handles"])
-        return set(_FALLBACK_HANDLES)
+    if cached and "linkedin" in cached and time.time() - cached.get("ts", 0) < CACHE_TTL:
+        data = {"handles": cached["handles"], "linkedin": cached["linkedin"]}
+    else:
+        try:
+            data = _fetch_from_sheet()
+            try:
+                with open(CACHE_FILE, "w") as f:
+                    json.dump({"ts": time.time(), **data}, f)
+            except OSError:
+                pass
+        except Exception as e:
+            log.warning(f"vc_priority: sheet fetch failed ({e}), using stale cache/fallback")
+            if cached:
+                data = {"handles": cached.get("handles", []), "linkedin": cached.get("linkedin", [])}
+            else:
+                data = {"handles": _FALLBACK_HANDLES, "linkedin": []}
+    _memo.update(ts=time.time(), data=data)
+    return data
+
+
+def get_vc_handles() -> set[str]:
+    """Lowercased X handles from the sheet."""
+    return set(_get_sheet_data()["handles"])
+
+
+def get_vc_linkedin_profiles() -> list[dict]:
+    """[{name, fund, linkedin_url}] for sheet rows with a direct LinkedIn link."""
+    return _get_sheet_data()["linkedin"]
 
 
 def is_vc(username: str) -> bool:

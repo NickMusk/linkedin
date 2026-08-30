@@ -24,10 +24,26 @@ POSTS_PER_PROFILE = 5         # fetch last N posts per VC
 
 
 def load_watchlist() -> list[dict]:
-    if not os.path.exists(WATCHLIST_FILE):
-        return []
-    with open(WATCHLIST_FILE) as f:
-        return json.load(f)
+    watchlist = []
+    if os.path.exists(WATCHLIST_FILE):
+        with open(WATCHLIST_FILE) as f:
+            watchlist = json.load(f)
+    # Merge in the VC sheet's LinkedIn profiles (fundraising target list) —
+    # sheet edits flow in automatically, no redeploy needed. Sheet people are
+    # prepended: they are the priority targets.
+    try:
+        from vc_priority import get_vc_linkedin_profiles
+        known = {_url_to_key(w.get("linkedin_url", "")) for w in watchlist}
+        sheet_entries = [
+            {**p, "role": "Partner", "source": "sheet"}
+            for p in get_vc_linkedin_profiles()
+            if _url_to_key(p["linkedin_url"]) not in known
+        ]
+        watchlist = sheet_entries + watchlist
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"VC sheet merge failed: {e}")
+    return watchlist
 
 
 def load_vc_state() -> dict:
