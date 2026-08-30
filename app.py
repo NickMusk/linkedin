@@ -199,6 +199,7 @@ def add_to_tw_queue(items: list):
             "tweet_text": it.get("text", "")[:280],
             "reply": it.get("draft", ""),
             "likes": it.get("likes", 0),
+            "vc": bool(it.get("vc")),
             "tweet_posted_at": it.get("posted_at", ""),
             "status": "pending",
             "generated_at": now,
@@ -425,6 +426,7 @@ TEMPLATE = """
         {% endif %}
         <span class="text-xs text-gray-600">{{ (it.tweet_posted_at or it.generated_at or '')[:10] }}</span>
         <span class="text-xs text-gray-600">{{ it.likes or '' }}{% if it.likes %} likes{% endif %}</span>
+        {% if it.vc %}<span class="text-xs px-2 py-0.5 rounded-full bg-violet-900 text-violet-300 font-semibold">VC</span>{% endif %}
         <span data-badge class="ml-auto text-xs px-2 py-0.5 rounded-full {% if it.status == 'approved' %}bg-sky-900 text-sky-300{% else %}bg-gray-800 text-yellow-400{% endif %}">
           {{ it.status }}
         </span>
@@ -702,6 +704,15 @@ def _run_twitter_generate():
         publishable = [it for it in items if not it.get("skip") and it.get("draft", "").strip()]
         for it in publishable:
             it["tweet_url"] = it.get("url", "")
+        # VC people from the sheet get replied to first: mark them and put
+        # them at the head of the queue.
+        try:
+            from vc_priority import is_vc
+            for it in publishable:
+                it["vc"] = is_vc(it.get("author_username", "")) or it.get("source", "").endswith("vc-list")
+            publishable.sort(key=lambda it: not it.get("vc"))
+        except Exception as e:
+            log.warning(f"Twitter: VC tagging failed: {e}")
         added = add_to_tw_queue(publishable)
         log.info(f"Twitter: added {len(publishable)} replies to queue (total {added}).")
     except Exception as e:

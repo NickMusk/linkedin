@@ -48,6 +48,10 @@ TWITTER_KEYWORDS = [
 TWEETS_PER_KEYWORD = 25
 MIN_LIKES = 10
 
+# VC-list pass: tweets fetched straight from the people in the VC sheet are
+# replied to regardless of like count — the author matters, not the numbers.
+VC_TWEETS_PER_QUERY = 30
+
 ACTOR_TWITTER = "apidojo/tweet-scraper"
 
 
@@ -90,6 +94,45 @@ def fetch_tweets() -> list[dict]:
 
     errors = 0
     raw_items = 0
+
+    # VC-list pass first: recent tweets from the sheet's VC people, no like
+    # threshold. Failures here never affect the keyword loop's auth health
+    # signal — a bad sheet fetch must not read as dead Twitter cookies.
+    try:
+        from vc_priority import vc_search_terms
+        vc_terms = vc_search_terms()
+    except Exception as e:
+        log.warning(f"VC pass skipped: {e}")
+        vc_terms = []
+    for term in vc_terms:
+        print(f"  Fetching VC tweets: {term[:60]}...")
+        try:
+            run = client.actor(ACTOR_TWITTER).call(run_input={
+                "searchTerms": [term],
+                "maxItems": VC_TWEETS_PER_QUERY,
+                "addUserInfo": True,
+                "scrapeTweetReplies": False,
+                "sort": "Latest",
+                "cookie": [
+                    {"name": "auth_token", "value": TWITTER_AUTH_TOKEN},
+                    {"name": "ct0", "value": TWITTER_CT0},
+                ],
+            })
+            for item in client.dataset(run["defaultDatasetId"]).iterate_items():
+                url = item.get("url") or item.get("tweetUrl", "")
+                created = item.get("createdAt", "") or item.get("created_at", "")
+                try:
+                    tweet_date = _parse_tweet_date(created)
+                    if tweet_date is not None and tweet_date < cutoff:
+                        continue
+                except Exception:
+                    pass
+                if url and url not in seen:
+                    seen.add(url)
+                    tweets.append(_normalize(item, "vc-list"))
+        except Exception as e:
+            log.warning(f"VC tweet fetch failed for chunk: {type(e).__name__}: {e}")
+        time.sleep(2)
 
     for keyword in TWITTER_KEYWORDS:
         print(f"  Fetching tweets: {keyword}")
