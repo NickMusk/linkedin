@@ -66,7 +66,20 @@ def _load_recent_comments(n=5) -> list[str]:
         return []
 
 
+# Rewriter output that leaks the editor's own voice instead of the comment.
+# Any hit falls back to the original draft (a real comment never talks about
+# rewriting itself).
+_META_RE = re.compile(
+    r"i can'?t\b|i cannot\b|rewrit|restructur|preserving every|word choice"
+    r"|please share|as an ai|original comment|according to the rules",
+    re.IGNORECASE,
+)
+
+
 def _rewrite_one(draft: str, recent: list[str]) -> str:
+    # Too short to restructure; sending it to the editor only invites refusals.
+    if len(draft.strip()) < 40:
+        return draft
     recent_block = "\n".join(f"- {c[:120]}" for c in recent) if recent else "(none)"
     try:
         resp = _client.messages.create(
@@ -81,7 +94,11 @@ def _rewrite_one(draft: str, recent: list[str]) -> str:
                 ),
             }],
         )
-        return _strip_dashes(resp.content[0].text.strip())
+        out = _strip_dashes(resp.content[0].text.strip())
+        if _META_RE.search(out) or len(out) > len(draft) * 2.5 + 100:
+            print("  [rewrite rejected: meta/refusal output, keeping draft]")
+            return draft
+        return out
     except Exception as e:
         print(f"  [rewrite error] {e}")
         return draft
