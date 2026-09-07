@@ -70,8 +70,10 @@ def _load_recent_comments(n=5) -> list[str]:
 # Any hit falls back to the original draft (a real comment never talks about
 # rewriting itself).
 _META_RE = re.compile(
-    r"i can'?t\b|i cannot\b|rewrit|restructur|preserving every|word choice"
-    r"|please share|as an ai|original comment|according to the rules",
+    r"i (can|don|won)['’]?t\b|i cannot\b|rewrit|restructur|preserving every"
+    r"|word choice|please (share|provide)|as an ai|original comment"
+    r"|according to the rules|interjection|no sentence structure"
+    r"|comment (text|to rewrite|content)",
     re.IGNORECASE,
 )
 
