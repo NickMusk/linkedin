@@ -48,8 +48,28 @@ MAX_FAILURES = 3
 # Replying to a weeks-old tweet reads as bot behavior — the queue has a long
 # backlog, only post replies generated in the last few days.
 MAX_ITEM_AGE_DAYS = 5
+# One reply per author per this window: the VC pass puts many tweets of the
+# same person into the queue, and replying to them batch after batch is spam.
+AUTHOR_COOLDOWN_HOURS = 20
+AUTHORS_FILE = Path(__file__).parent / "posted_authors.json"
 
 STATUS_RE = re.compile(r"/status/(\d+)")
+
+# Pre-send gate (same class of bug as the LinkedIn leak): never post a reply
+# with emoji or leaked drafting narration. Blocked items are rejected on the
+# dashboard so they leave the queue.
+GATE_BAD_RE = re.compile(
+    r"[\U0001F000-\U0001FAFF\U00002600-\U000027BF\U0001F900-\U0001F9FF️]"
+    r"|\bwait[,.\s]|let me (redo|try|fix|rewrite)|no emoji|redo:|revised"
+    r"|here['’]s (a|the) (version|comment|take)|as an ai|rewrit",
+    re.IGNORECASE,
+)
+
+
+def mark_rejected(item_id: str):
+    req = urllib.request.Request(f"{DASHBOARD}/twitter/queue/{item_id}/reject", method="POST", data=b"")
+    with urllib.request.urlopen(req, timeout=30) as r:
+        r.read()
 
 # Click Post once the composer is ready; report exactly what happened.
 CLICK_JS = """
@@ -63,12 +83,16 @@ CLICK_JS = """
 """
 
 # After the click: an error toast means X rejected it; a gone/disabled
-# composer with no error toast means the reply went out.
+# composer with no error toast means the reply went out. "already said that"
+# means this exact reply EXISTS on X (an earlier attempt succeeded) — that is
+# a confirmation, not a failure.
 VERIFY_JS = """
 (() => {
   const toast = document.querySelector('[data-testid="toast"]');
-  if (toast && /not able|can.t|cannot|error|restricted|try again|too fast|limit/i.test(toast.innerText || ""))
-    return "rejected: " + (toast.innerText || "").slice(0, 120);
+  const tt = toast ? (toast.innerText || "") : "";
+  if (/already said|already sent|duplicate/i.test(tt)) return "duplicate";
+  if (toast && /not able|can.t|cannot|error|restricted|try again|too fast|limit/i.test(tt))
+    return "rejected: " + tt.slice(0, 120);
   const btn = document.querySelector('[data-testid="tweetButton"]');
   if (!btn) return "posted";
   const empty = !document.querySelector('[data-testid="tweetTextarea_0"]')
@@ -97,6 +121,36 @@ def _load_failures() -> dict:
 
 def _save_failures(f: dict):
     FAILURES_FILE.write_text(json.dumps(f, indent=1))
+
+
+def _load_recent_authors() -> set:
+    """Authors replied to within the cooldown window (lowercased)."""
+    if not AUTHORS_FILE.exists():
+        return set()
+    data = json.loads(AUTHORS_FILE.read_text())
+    cutoff = time.time() - AUTHOR_COOLDOWN_HOURS * 3600
+    return {a for a, ts in data.items() if ts >= cutoff}
+
+
+def _record_author(author: str):
+    data = {}
+    if AUTHORS_FILE.exists():
+        data = json.loads(AUTHORS_FILE.read_text())
+    data[(author or "").lower()] = time.time()
+    cutoff = time.time() - AUTHOR_COOLDOWN_HOURS * 3600
+    AUTHORS_FILE.write_text(json.dumps({a: t for a, t in data.items() if t >= cutoff}))
+
+
+def _wake_display():
+    """Nudge the display awake — with the screen off macOS freezes Chrome's
+    rendering (occlusion) and the composer never mounts (whole 04:02 batch
+    timed out overnight). Harmless if the display is already on."""
+    import subprocess
+    try:
+        subprocess.run(["caffeinate", "-u", "-t", "3"], timeout=10)
+        time.sleep(2)
+    except Exception:
+        pass
 
 
 def _is_vc_item(item: dict) -> bool:
@@ -156,7 +210,13 @@ def post_one(item: dict) -> str:
 
     time.sleep(4)
     try:
-        return chrome_js(VERIFY_JS)
+        result = chrome_js(VERIFY_JS)
+        if result == "unknown":
+            # give the SPA a few more seconds to close the composer before
+            # concluding anything
+            time.sleep(5)
+            result = chrome_js(VERIFY_JS)
+        return result
     except RuntimeError as e:
         return f"verify_error: {e}"
 
@@ -166,7 +226,19 @@ def run_batch(dry_run: bool = False) -> int:
     if not items:
         print(f"[{datetime.now():%H:%M}] Очередь пуста.")
         return 0
-    batch = items[:random.randint(*BATCH_RANGE)]
+    # max one reply per author per batch AND per cooldown window — the same
+    # person replied to in every batch (spotted with @ericbahn) reads as spam
+    recent = _load_recent_authors()
+    size = random.randint(*BATCH_RANGE)
+    batch, seen_authors = [], set()
+    for it in items:
+        a = (it.get("author_username") or "").lower()
+        if a in seen_authors or a in recent:
+            continue
+        seen_authors.add(a)
+        batch.append(it)
+        if len(batch) >= size:
+            break
     vc_count = sum(1 for it in batch if _is_vc_item(it))
     print(f"[{datetime.now():%H:%M}] Батч: {len(batch)} реплаев ({vc_count} VC) из {len(items)} в очереди.")
 
@@ -176,22 +248,45 @@ def run_batch(dry_run: bool = False) -> int:
             print(f"  {tag}@{it['author_username']}: {it['reply'][:80]}")
         return 0
 
+    _wake_display()
     failures = _load_failures()
     posted = 0
+    timeouts_in_a_row = 0
     for i, it in enumerate(batch, 1):
         print(f"  [{i}/{len(batch)}] @{it['author_username']} ... ", end="", flush=True)
+        if GATE_BAD_RE.search(it.get("reply") or ""):
+            print("blocked_by_gate (emoji/meta) — reject")
+            try:
+                mark_rejected(it["id"])
+            except Exception as e:
+                print(f"    (не смог отклонить на дашборде: {e})")
+            continue
         try:
             result = post_one(it)
         except Exception as e:
             result = f"error: {e}"
         print(result)
-        if result == "posted":
+        # "duplicate" = X says this exact text is already posted (an earlier
+        # attempt worked); "unknown" = click went through, no error toast —
+        # in both cases treat as posted: re-posting is spam, and a rare lost
+        # reply is far cheaper than visible duplicates.
+        if result in ("posted", "duplicate", "unknown"):
             posted += 1
+            timeouts_in_a_row = 0
             failures.pop(it["id"], None)
+            _record_author(it.get("author_username", ""))
             try:
                 mark_posted(it["id"])
             except Exception as e:
                 print(f"    (не смог отметить на дашборде: {e})")
+        elif result == "composer_timeout":
+            # Chrome isn't rendering (display off / locked screen) — this is
+            # our infrastructure failing, not the tweet: don't count it
+            # against the item, and abort the batch after two in a row.
+            timeouts_in_a_row += 1
+            if timeouts_in_a_row >= 2:
+                print("  Chrome не рендерит (экран погашен?) — батч прерван, повтор позже.")
+                break
         else:
             failures[it["id"]] = failures.get(it["id"], 0) + 1
         _save_failures(failures)
@@ -201,29 +296,60 @@ def run_batch(dry_run: bool = False) -> int:
     return posted
 
 
+LOCK_FILE = Path(__file__).parent / "post_replies.lock"
+
+
+def _acquire_lock() -> bool:
+    """Refuse to run two posters at once — a second instance races the first
+    over the same pending items and double-posts them."""
+    if LOCK_FILE.exists():
+        try:
+            pid = int(LOCK_FILE.read_text())
+            import os
+            os.kill(pid, 0)  # raises if that process is gone
+            return False
+        except (ValueError, ProcessLookupError, PermissionError):
+            pass  # stale lock
+    import os
+    import atexit
+    LOCK_FILE.write_text(str(os.getpid()))
+    atexit.register(lambda: LOCK_FILE.unlink(missing_ok=True))
+    return True
+
+
 def main():
     dry_run = "--dry-run" in sys.argv
     once = "--once" in sys.argv
+
+    if not dry_run and not _acquire_lock():
+        print("⚠️  Постер уже запущен (post_replies.lock) — второй экземпляр запрещён.")
+        sys.exit(1)
 
     if not dry_run and not follow_vcs.check_js_allowed():
         print("⚠️  Chrome: включи View → Developer → Allow JavaScript from Apple Events")
         sys.exit(1)
 
     while True:
-        run_batch(dry_run=dry_run)
+        # A network blip (DNS, dashboard hiccup) must never kill the loop —
+        # log it, wait, try again.
+        try:
+            run_batch(dry_run=dry_run)
 
-        if not dry_run and not daily_follow.done_today():
-            print(f"[{datetime.now():%H:%M}] Дневные подписки на VC...")
-            try:
-                daily_follow.run_daily()
-            except Exception as e:
-                print(f"  daily_follow error: {e}")
+            if not dry_run and not daily_follow.done_today():
+                print(f"[{datetime.now():%H:%M}] Дневные подписки на VC...")
+                try:
+                    daily_follow.run_daily()
+                except Exception as e:
+                    print(f"  daily_follow error: {e}")
 
-        if once or dry_run:
-            break
-        pause = random.uniform(*BATCH_PAUSE_MIN) * 60
-        if not pending_items():
-            pause = EMPTY_QUEUE_WAIT_MIN * 60
+            if once or dry_run:
+                break
+            pause = random.uniform(*BATCH_PAUSE_MIN) * 60
+            if not pending_items():
+                pause = EMPTY_QUEUE_WAIT_MIN * 60
+        except Exception as e:
+            print(f"[{datetime.now():%H:%M}] Сбой цикла ({type(e).__name__}: {e}) — повтор через 5 мин.")
+            pause = 300
         print(f"[{datetime.now():%H:%M}] Пауза {pause / 60:.0f} мин.\n")
         time.sleep(pause)
 
