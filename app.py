@@ -735,6 +735,13 @@ def twitter_queue_json():
     return jsonify(get_tw_queue())
 
 
+@app.route("/comments/log.json")
+def comments_log_json():
+    """Full LinkedIn comments log (last 500) — for auditing published comments."""
+    from flask import jsonify
+    return jsonify(load_json(COMMENTS_LOG, []))
+
+
 @app.route("/agent.user.js")
 def agent_userscript():
     from flask import send_file
