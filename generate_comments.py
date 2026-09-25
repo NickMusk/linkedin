@@ -73,7 +73,9 @@ _META_RE = re.compile(
     r"i (can|don|won)['’]?t\b|i cannot\b|rewrit|restructur|preserving every"
     r"|word choice|please (share|provide)|as an ai|original comment"
     r"|according to the rules|interjection|no sentence structure"
-    r"|comment (text|to rewrite|content)",
+    r"|comment (text|to rewrite|content)"
+    r"|\bwait[,.\s]|let me (redo|try|fix)|no emoji|redo:|revised"
+    r"|[\U0001F000-\U0001FAFF\U00002600-\U000027BF\U0001F900-\U0001F9FF]",
     re.IGNORECASE,
 )
 

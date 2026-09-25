@@ -27,7 +27,73 @@ def _extract_activity_id(post_url: str):
     return m.group(1) if m else None
 
 
+# ── Pre-send gate ──────────────────────────────────────────────────────────
+# Twice the pipeline published the writer's own self-correction narration
+# ("Wait, no emoji. Let me redo: ..."). EVERY outgoing comment must pass this
+# gate; on any doubt we drop the comment — losing one comment is cheap,
+# posting editor chatter under Nick's name is not.
+
+_GATE_EMOJI_RE = re.compile("[\U0001F000-\U0001FAFF\U00002600-\U000027BF\U0001F900-\U0001F9FF️]")
+_GATE_META_RE = re.compile(
+    r"\bwait[,.\s]|let me (redo|try|rewrite|fix)|no emoji|redo:|my (bad|mistake)"
+    r"|here['’]s (a|the) (version|comment|take)|revised (version|comment)"
+    r"|as an ai|i (can|should)['’]?\w* (not|n['’]t)? ?(help|do that)"
+    r"|rewrit|meta.?comment",
+    re.IGNORECASE,
+)
+
+
+def _quoted_fragment_repeats(text: str) -> bool:
+    """The signature of a leaked redo: the same quoted draft appears twice."""
+    frags = re.findall(r'[\"“]([^\"”]{6,})[\"”]', text)
+    return len(frags) != len({f.strip().lower() for f in frags})
+
+
+def _llm_says_clean(text: str) -> bool:
+    """Final judgment call by a model: is this exactly one publishable comment?
+    Fails CLOSED — if the check can't run, the comment does not go out."""
+    try:
+        import anthropic
+        from config import ANTHROPIC_API_KEY
+        resp = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY).messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=5,
+            system=(
+                "Does the text contain leaked drafting process: self-correction narration "
+                "(like 'Wait, no emoji, let me redo'), two versions of the same phrase, "
+                "commentary about writing rules, or an AI refusal? "
+                "Reply LEAKED if yes. Reply CLEAN if it is just a normal comment of any "
+                "style or length (slang, 'lol', quotes, lists and emoticons are normal). "
+                "One word only: CLEAN or LEAKED."
+            ),
+            messages=[{"role": "user", "content": text}],
+        )
+        return resp.content[0].text.strip().upper().startswith("CLEAN")
+    except Exception as e:
+        print(f"  [pre-send gate] LLM check failed ({e}) — блокирую комментарий")
+        return False
+
+
+def comment_is_clean(text: str) -> tuple:
+    t = (text or "").strip()
+    if not t:
+        return False, "empty"
+    if _GATE_EMOJI_RE.search(t):
+        return False, "emoji (Nick never uses emoji)"
+    if _GATE_META_RE.search(t):
+        return False, "meta/self-correction phrasing"
+    if _quoted_fragment_repeats(t):
+        return False, "same quoted fragment twice (draft+redo leak)"
+    if not _llm_says_clean(t):
+        return False, "LLM gate said not a single clean comment"
+    return True, "ok"
+
+
 def _post_comment(social_id: str, text: str, account_id: str = None) -> tuple:
+    clean, reason = comment_is_clean(text)
+    if not clean:
+        print(f"  [pre-send gate] BLOCKED: {reason} | {text[:120]!r}")
+        return False, f"blocked by pre-send gate: {reason}"
     account_id = account_id or _DEFAULT_ACCOUNT_ID
     url = f"{UNIPILE_DSN}/api/v1/posts/{social_id}/comments"
     resp = requests.post(
