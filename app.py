@@ -808,7 +808,16 @@ def _li_growth_cycle(_rnd):
         return
 
     posts = fetch_li_growth_posts()
-    posts = [p for p in posts if p["url"] not in st["done_urls"]]
+    # кросс-дедуп: не комментировать то, что уже прокомментировала VC-полоса
+    # или лента (vc_state + последние 500 записей лога комментов)
+    from fetch_vc_posts import load_vc_state
+    vc_done = set()
+    for entry in load_vc_state().values():
+        vc_done.update(entry.get("commented_urls", []))
+    logged = {c.get("post_url") for c in load_json(COMMENTS_LOG, [])}
+    posts = [p for p in posts
+             if p["url"] not in st["done_urls"]
+             and p["url"] not in vc_done and p["url"] not in logged]
     if not posts:
         return
     log.info(f"LI growth: {len(posts)} fresh posts, generating...")
@@ -831,6 +840,10 @@ def _li_growth_cycle(_rnd):
             st["count"] += 1
             log_comment(it.get("author", "?"), url, it.get("text", ""), text)
             save_example(it.get("text", url), text)
+            # обратный дедуп: VC-полоса не должна прокомментировать этот же пост
+            if it.get("author_url"):
+                from fetch_vc_posts import record_vc_interaction
+                record_vc_interaction(it["author_url"], url)
             log.info(f"  LI growth OK [{st['count']}/{LI_GROWTH_DAILY_CAP}]: {it.get('author','?')[:30]}")
             save_json(LI_GROWTH_STATE, st)
             time.sleep(_rnd.randint(240, 540))

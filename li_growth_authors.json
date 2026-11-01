@@ -1,21 +1,489 @@
 {
   "_comment": "LinkedIn growth lane: big active authors whose fresh posts we comment within ~90 minutes. Slugs unverified ones just return no posts — prune/extend freely, the fetcher reloads each poll.",
   "authors": [
-    {"name": "Andrew Ng", "linkedin_url": "https://www.linkedin.com/in/andrewyng/"},
-    {"name": "Allie K. Miller", "linkedin_url": "https://www.linkedin.com/in/alliekmiller/"},
-    {"name": "Justin Welsh", "linkedin_url": "https://www.linkedin.com/in/justinwelsh/"},
-    {"name": "Lenny Rachitsky", "linkedin_url": "https://www.linkedin.com/in/lennyrachitsky/"},
-    {"name": "Greg Isenberg", "linkedin_url": "https://www.linkedin.com/in/gisenberg/"},
-    {"name": "Reid Hoffman", "linkedin_url": "https://www.linkedin.com/in/reidhoffman/"},
-    {"name": "Bernard Marr", "linkedin_url": "https://www.linkedin.com/in/bernardmarr/"},
-    {"name": "Sahil Bloom", "linkedin_url": "https://www.linkedin.com/in/sahilbloom/"},
-    {"name": "Codie Sanchez", "linkedin_url": "https://www.linkedin.com/in/codiesanchez/"},
-    {"name": "Alex Lieberman", "linkedin_url": "https://www.linkedin.com/in/alex-lieberman/"},
-    {"name": "Dan Martell", "linkedin_url": "https://www.linkedin.com/in/dmartell/"},
-    {"name": "Zain Kahn", "linkedin_url": "https://www.linkedin.com/in/zainkahn/"},
-    {"name": "Adam Grant", "linkedin_url": "https://www.linkedin.com/in/adammgrant/"},
-    {"name": "Sarah Guo", "linkedin_url": "https://www.linkedin.com/in/sarahxguo/"},
-    {"name": "Deedy Das", "linkedin_url": "https://www.linkedin.com/in/debarghyadas/"},
-    {"name": "Hunter Walk", "linkedin_url": "https://www.linkedin.com/in/hunterwalk/"}
+    {
+      "name": "Andrew Ng",
+      "linkedin_url": "https://www.linkedin.com/in/andrewyng/"
+    },
+    {
+      "name": "Allie K. Miller",
+      "linkedin_url": "https://www.linkedin.com/in/alliekmiller/"
+    },
+    {
+      "name": "Justin Welsh",
+      "linkedin_url": "https://www.linkedin.com/in/justinwelsh/"
+    },
+    {
+      "name": "Lenny Rachitsky",
+      "linkedin_url": "https://www.linkedin.com/in/lennyrachitsky/"
+    },
+    {
+      "name": "Greg Isenberg",
+      "linkedin_url": "https://www.linkedin.com/in/gisenberg/"
+    },
+    {
+      "name": "Reid Hoffman",
+      "linkedin_url": "https://www.linkedin.com/in/reidhoffman/"
+    },
+    {
+      "name": "Bernard Marr",
+      "linkedin_url": "https://www.linkedin.com/in/bernardmarr/"
+    },
+    {
+      "name": "Sahil Bloom",
+      "linkedin_url": "https://www.linkedin.com/in/sahilbloom/"
+    },
+    {
+      "name": "Codie Sanchez",
+      "linkedin_url": "https://www.linkedin.com/in/codiesanchez/"
+    },
+    {
+      "name": "Alex Lieberman",
+      "linkedin_url": "https://www.linkedin.com/in/alex-lieberman/"
+    },
+    {
+      "name": "Dan Martell",
+      "linkedin_url": "https://www.linkedin.com/in/dmartell/"
+    },
+    {
+      "name": "Zain Kahn",
+      "linkedin_url": "https://www.linkedin.com/in/zainkahn/"
+    },
+    {
+      "name": "Adam Grant",
+      "linkedin_url": "https://www.linkedin.com/in/adammgrant/"
+    },
+    {
+      "name": "Sarah Guo",
+      "linkedin_url": "https://www.linkedin.com/in/sarahxguo/"
+    },
+    {
+      "name": "Deedy Das",
+      "linkedin_url": "https://www.linkedin.com/in/debarghyadas/"
+    },
+    {
+      "name": "Hunter Walk",
+      "linkedin_url": "https://www.linkedin.com/in/hunterwalk/"
+    },
+    {
+      "name": "Ethan Mollick",
+      "linkedin_url": "https://www.linkedin.com/in/emollick/"
+    },
+    {
+      "name": "Cassie Kozyrkov",
+      "linkedin_url": "https://www.linkedin.com/in/kozyrkov/"
+    },
+    {
+      "name": "Pascal Bornet",
+      "linkedin_url": "https://www.linkedin.com/in/pascalbornet/"
+    },
+    {
+      "name": "Steve Nouri",
+      "linkedin_url": "https://www.linkedin.com/in/stevenouri/"
+    },
+    {
+      "name": "Armand Ruiz",
+      "linkedin_url": "https://www.linkedin.com/in/armand-ruiz/"
+    },
+    {
+      "name": "Linas Beliunas",
+      "linkedin_url": "https://www.linkedin.com/in/linasbeliunas/"
+    },
+    {
+      "name": "Ruben Hassid",
+      "linkedin_url": "https://www.linkedin.com/in/ruben-hassid/"
+    },
+    {
+      "name": "Kirk Borne",
+      "linkedin_url": "https://www.linkedin.com/in/kirkdborne/"
+    },
+    {
+      "name": "Ronald van Loon",
+      "linkedin_url": "https://www.linkedin.com/in/ronald-van-loon/"
+    },
+    {
+      "name": "Conor Grennan",
+      "linkedin_url": "https://www.linkedin.com/in/conorgrennan/"
+    },
+    {
+      "name": "Rowan Cheung",
+      "linkedin_url": "https://www.linkedin.com/in/rowancheung/"
+    },
+    {
+      "name": "Matt Wolfe",
+      "linkedin_url": "https://www.linkedin.com/in/mattwolfe/"
+    },
+    {
+      "name": "Nicolas Cole",
+      "linkedin_url": "https://www.linkedin.com/in/nicolascole77/"
+    },
+    {
+      "name": "Dickie Bush",
+      "linkedin_url": "https://www.linkedin.com/in/dickiebush/"
+    },
+    {
+      "name": "Shaan Puri",
+      "linkedin_url": "https://www.linkedin.com/in/shaanpuri/"
+    },
+    {
+      "name": "Matt Gray",
+      "linkedin_url": "https://www.linkedin.com/in/mattgray1/"
+    },
+    {
+      "name": "Dan Koe",
+      "linkedin_url": "https://www.linkedin.com/in/thedankoe/"
+    },
+    {
+      "name": "Jay Clouse",
+      "linkedin_url": "https://www.linkedin.com/in/jayclouse/"
+    },
+    {
+      "name": "Amanda Natividad",
+      "linkedin_url": "https://www.linkedin.com/in/amandanat/"
+    },
+    {
+      "name": "Ross Simmonds",
+      "linkedin_url": "https://www.linkedin.com/in/rosssimmonds/"
+    },
+    {
+      "name": "Neil Patel",
+      "linkedin_url": "https://www.linkedin.com/in/neilkpatel/"
+    },
+    {
+      "name": "Noah Kagan",
+      "linkedin_url": "https://www.linkedin.com/in/noahkagan/"
+    },
+    {
+      "name": "Pat Walls",
+      "linkedin_url": "https://www.linkedin.com/in/patwalls/"
+    },
+    {
+      "name": "Arvid Kahl",
+      "linkedin_url": "https://www.linkedin.com/in/arvidkahl/"
+    },
+    {
+      "name": "Tibo Louis-Lucas",
+      "linkedin_url": "https://www.linkedin.com/in/tibo-louis-lucas/"
+    },
+    {
+      "name": "Guillaume Moubeche",
+      "linkedin_url": "https://www.linkedin.com/in/guillaume-moubeche/"
+    },
+    {
+      "name": "Jeff Weiner",
+      "linkedin_url": "https://www.linkedin.com/in/jeffweiner08/"
+    },
+    {
+      "name": "Satya Nadella",
+      "linkedin_url": "https://www.linkedin.com/in/satyanadella/"
+    },
+    {
+      "name": "Simon Sinek",
+      "linkedin_url": "https://www.linkedin.com/in/simonsinek/"
+    },
+    {
+      "name": "Gary Vaynerchuk",
+      "linkedin_url": "https://www.linkedin.com/in/garyvaynerchuk/"
+    },
+    {
+      "name": "James Clear",
+      "linkedin_url": "https://www.linkedin.com/in/jamesclear/"
+    },
+    {
+      "name": "Daniel Pink",
+      "linkedin_url": "https://www.linkedin.com/in/danielhpink/"
+    },
+    {
+      "name": "Guy Kawasaki",
+      "linkedin_url": "https://www.linkedin.com/in/guykawasaki/"
+    },
+    {
+      "name": "Brene Brown",
+      "linkedin_url": "https://www.linkedin.com/in/brenebrown/"
+    },
+    {
+      "name": "Mel Robbins",
+      "linkedin_url": "https://www.linkedin.com/in/melrobbins/"
+    },
+    {
+      "name": "Steven Bartlett",
+      "linkedin_url": "https://www.linkedin.com/in/stevenbartlett-123/"
+    },
+    {
+      "name": "Jason Lemkin",
+      "linkedin_url": "https://www.linkedin.com/in/jasonmlemkin/"
+    },
+    {
+      "name": "Elad Gil",
+      "linkedin_url": "https://www.linkedin.com/in/eladgil/"
+    },
+    {
+      "name": "Andrew Chen",
+      "linkedin_url": "https://www.linkedin.com/in/andrewchen/"
+    },
+    {
+      "name": "Hiten Shah",
+      "linkedin_url": "https://www.linkedin.com/in/hnshah/"
+    },
+    {
+      "name": "April Dunford",
+      "linkedin_url": "https://www.linkedin.com/in/aprildunford/"
+    },
+    {
+      "name": "Kyle Poyar",
+      "linkedin_url": "https://www.linkedin.com/in/kylepoyar/"
+    },
+    {
+      "name": "Tomasz Tunguz",
+      "linkedin_url": "https://www.linkedin.com/in/tomasztunguz/"
+    },
+    {
+      "name": "Christoph Janz",
+      "linkedin_url": "https://www.linkedin.com/in/christophjanz/"
+    },
+    {
+      "name": "David Skok",
+      "linkedin_url": "https://www.linkedin.com/in/dskok/"
+    },
+    {
+      "name": "Harry Stebbings",
+      "linkedin_url": "https://www.linkedin.com/in/harrystebbings/"
+    },
+    {
+      "name": "Turner Novak",
+      "linkedin_url": "https://www.linkedin.com/in/turnernovak/"
+    },
+    {
+      "name": "Nathan Benaich",
+      "linkedin_url": "https://www.linkedin.com/in/nathanbenaich/"
+    },
+    {
+      "name": "Rex Woodbury",
+      "linkedin_url": "https://www.linkedin.com/in/rexwoodbury/"
+    },
+    {
+      "name": "Konstantine Buhler",
+      "linkedin_url": "https://www.linkedin.com/in/konstantinebuhler/"
+    },
+    {
+      "name": "Saul Klein",
+      "linkedin_url": "https://www.linkedin.com/in/saulklein/"
+    },
+    {
+      "name": "Hemant Taneja",
+      "linkedin_url": "https://www.linkedin.com/in/hemanttaneja/"
+    },
+    {
+      "name": "Astasia Myers",
+      "linkedin_url": "https://www.linkedin.com/in/astasiamyers/"
+    },
+    {
+      "name": "Ed Sim",
+      "linkedin_url": "https://www.linkedin.com/in/edsim/"
+    },
+    {
+      "name": "Charles Hudson",
+      "linkedin_url": "https://www.linkedin.com/in/chudson/"
+    },
+    {
+      "name": "Leo Polovets",
+      "linkedin_url": "https://www.linkedin.com/in/lpolovets/"
+    },
+    {
+      "name": "Eric Bahn",
+      "linkedin_url": "https://www.linkedin.com/in/ericbahn/"
+    },
+    {
+      "name": "Roy Bahat",
+      "linkedin_url": "https://www.linkedin.com/in/roybahat/"
+    },
+    {
+      "name": "Thomas Otter",
+      "linkedin_url": "https://www.linkedin.com/in/thomasotter/"
+    },
+    {
+      "name": "Matt Murphy",
+      "linkedin_url": "https://www.linkedin.com/in/mattmurphy1/"
+    },
+    {
+      "name": "Shreyas Doshi",
+      "linkedin_url": "https://www.linkedin.com/in/shreyasdoshi/"
+    },
+    {
+      "name": "Julie Zhuo",
+      "linkedin_url": "https://www.linkedin.com/in/julie-zhuo/"
+    },
+    {
+      "name": "Melissa Perri",
+      "linkedin_url": "https://www.linkedin.com/in/melissaperri/"
+    },
+    {
+      "name": "Teresa Torres",
+      "linkedin_url": "https://www.linkedin.com/in/teresa-torres/"
+    },
+    {
+      "name": "Marty Cagan",
+      "linkedin_url": "https://www.linkedin.com/in/cagan/"
+    },
+    {
+      "name": "Elena Verna",
+      "linkedin_url": "https://www.linkedin.com/in/elenaverna/"
+    },
+    {
+      "name": "Kieran Flanagan",
+      "linkedin_url": "https://www.linkedin.com/in/kieranjflanagan/"
+    },
+    {
+      "name": "Brian Balfour",
+      "linkedin_url": "https://www.linkedin.com/in/bbalfour/"
+    },
+    {
+      "name": "Josh Bersin",
+      "linkedin_url": "https://www.linkedin.com/in/joshbersin/"
+    },
+    {
+      "name": "Dan Schawbel",
+      "linkedin_url": "https://www.linkedin.com/in/danschawbel/"
+    },
+    {
+      "name": "Brigette Hyacinth",
+      "linkedin_url": "https://www.linkedin.com/in/brigettehyacinth/"
+    },
+    {
+      "name": "Laszlo Bock",
+      "linkedin_url": "https://www.linkedin.com/in/laszlobock/"
+    },
+    {
+      "name": "Kathleen Hogan",
+      "linkedin_url": "https://www.linkedin.com/in/kathleenhogan/"
+    },
+    {
+      "name": "Johnny C. Taylor Jr.",
+      "linkedin_url": "https://www.linkedin.com/in/johnnyctaylorjr/"
+    },
+    {
+      "name": "Hung Lee",
+      "linkedin_url": "https://www.linkedin.com/in/hunglee/"
+    },
+    {
+      "name": "Lars Schmidt",
+      "linkedin_url": "https://www.linkedin.com/in/larsschmidt/"
+    },
+    {
+      "name": "Madeline Laurano",
+      "linkedin_url": "https://www.linkedin.com/in/madelinelaurano/"
+    },
+    {
+      "name": "George LaRocque",
+      "linkedin_url": "https://www.linkedin.com/in/georgelarocque/"
+    },
+    {
+      "name": "Tim Sackett",
+      "linkedin_url": "https://www.linkedin.com/in/timsackett/"
+    },
+    {
+      "name": "Robin Choy",
+      "linkedin_url": "https://www.linkedin.com/in/robinchoy/"
+    },
+    {
+      "name": "Gergely Orosz",
+      "linkedin_url": "https://www.linkedin.com/in/gergelyorosz/"
+    },
+    {
+      "name": "Kelsey Hightower",
+      "linkedin_url": "https://www.linkedin.com/in/kelseyhightower/"
+    },
+    {
+      "name": "Cassidy Williams",
+      "linkedin_url": "https://www.linkedin.com/in/cassidoo/"
+    },
+    {
+      "name": "Addy Osmani",
+      "linkedin_url": "https://www.linkedin.com/in/addyosmani/"
+    },
+    {
+      "name": "Santiago Valdarrama",
+      "linkedin_url": "https://www.linkedin.com/in/svpino/"
+    },
+    {
+      "name": "Zach Wilson",
+      "linkedin_url": "https://www.linkedin.com/in/eczachly/"
+    },
+    {
+      "name": "Bill Gates",
+      "linkedin_url": "https://www.linkedin.com/in/williamhgates/"
+    },
+    {
+      "name": "Richard Branson",
+      "linkedin_url": "https://www.linkedin.com/in/rbranson/"
+    },
+    {
+      "name": "Arianna Huffington",
+      "linkedin_url": "https://www.linkedin.com/in/ariannahuffington/"
+    },
+    {
+      "name": "Whitney Wolfe Herd",
+      "linkedin_url": "https://www.linkedin.com/in/whitney-wolfe-herd/"
+    },
+    {
+      "name": "Melanie Perkins",
+      "linkedin_url": "https://www.linkedin.com/in/melanieperkins/"
+    },
+    {
+      "name": "Wes Kao",
+      "linkedin_url": "https://www.linkedin.com/in/weskao/"
+    },
+    {
+      "name": "Sahil Lavingia",
+      "linkedin_url": "https://www.linkedin.com/in/sahillavingia/"
+    },
+    {
+      "name": "Des Traynor",
+      "linkedin_url": "https://www.linkedin.com/in/destraynor/"
+    },
+    {
+      "name": "Ryan Hoover",
+      "linkedin_url": "https://www.linkedin.com/in/ryanrhoover/"
+    },
+    {
+      "name": "Hiten (ProductHabits)",
+      "linkedin_url": "https://www.linkedin.com/in/hitenshah/"
+    },
+    {
+      "name": "Andrew Gazdecki",
+      "linkedin_url": "https://www.linkedin.com/in/agazdecki/"
+    },
+    {
+      "name": "Jon Yongfook",
+      "linkedin_url": "https://www.linkedin.com/in/yongfook/"
+    },
+    {
+      "name": "Marc Louvion",
+      "linkedin_url": "https://www.linkedin.com/in/marclouvion/"
+    },
+    {
+      "name": "Tony Fadell",
+      "linkedin_url": "https://www.linkedin.com/in/tfadell/"
+    },
+    {
+      "name": "Aaron Levie",
+      "linkedin_url": "https://www.linkedin.com/in/boxaaron/"
+    },
+    {
+      "name": "Ryan Breslow",
+      "linkedin_url": "https://www.linkedin.com/in/ryantakesoff/"
+    },
+    {
+      "name": "Alexandr Wang",
+      "linkedin_url": "https://www.linkedin.com/in/alexandrwang/"
+    },
+    {
+      "name": "Amjad Masad",
+      "linkedin_url": "https://www.linkedin.com/in/amjadmasad/"
+    },
+    {
+      "name": "Logan Kilpatrick",
+      "linkedin_url": "https://www.linkedin.com/in/logankilpatrick/"
+    }
   ]
 }

@@ -17,8 +17,10 @@ from fetch_vc_posts import _normalize_post, ACTOR_LINKEDIN_POSTS
 log = logging.getLogger(__name__)
 
 AUTHORS_FILE = os.path.join(os.path.dirname(__file__), "li_growth_authors.json")
+ROTATION_FILE = os.path.join(os.path.dirname(__file__), "li_growth_rotation.json")
 MAX_POST_AGE_MIN = 90
 POSTS_PER_PROFILE = 3
+ROTATE_PER_CYCLE = 40  # 121 авторов / 40 за цикл ≈ полный круг за 1.5ч — в размер окна свежести
 
 
 def load_li_growth_authors() -> list:
@@ -30,10 +32,29 @@ def load_li_growth_authors() -> list:
         return []
 
 
+def _rotate(authors: list) -> list:
+    """Round-robin slice of the author list so each 30-min cycle polls a
+    different ROTATE_PER_CYCLE subset (cost control with 100+ authors)."""
+    cur = 0
+    try:
+        with open(ROTATION_FILE) as f:
+            cur = json.load(f).get("cursor", 0) % len(authors)
+    except Exception:
+        pass
+    sel = [authors[(cur + i) % len(authors)] for i in range(min(ROTATE_PER_CYCLE, len(authors)))]
+    try:
+        with open(ROTATION_FILE, "w") as f:
+            json.dump({"cursor": (cur + ROTATE_PER_CYCLE) % len(authors)}, f)
+    except Exception:
+        pass
+    return sel
+
+
 def fetch_li_growth_posts() -> list:
     authors = load_li_growth_authors()
     if not authors:
         return []
+    authors = _rotate(authors)
     client = ApifyClient(APIFY_API_TOKEN)
     cutoff = datetime.now(timezone.utc) - timedelta(minutes=MAX_POST_AGE_MIN)
     posts = []
