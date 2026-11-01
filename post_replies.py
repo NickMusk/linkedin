@@ -62,8 +62,9 @@ STATUS_RE = re.compile(r"/status/(\d+)")
 # dashboard so they leave the queue.
 GATE_BAD_RE = re.compile(
     r"[\U0001F000-\U0001FAFF\U00002600-\U000027BF\U0001F900-\U0001F9FF️]"
-    r"|\bwait[,.\s]|let me (redo|try|fix|rewrite)|no emoji|redo:|revised"
-    r"|here['’]s (a|the) (version|comment|take)|as an ai|rewrit",
+    r"|(^|\n)\s*wait[,.]|let me (redo|try|fix|rewrite)|no emoji|redo:|revised"
+    r"|here['’]s (a|the) (version|comment|take)|as an ai|rewrit"
+    r"|(?-i:(^|\n)\s*SKIP\s*($|\n))|nothing to (react|reply|respond)|reply to a reply",
     re.IGNORECASE,
 )
 
