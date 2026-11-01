@@ -70,8 +70,13 @@ def load_json(path, default):
 
 
 def save_json(path, data):
-    with open(path, "w") as f:
+    # Atomic write: a reader must never see a half-written file. The 2026-10-31
+    # queue wipe happened exactly this way — concurrent reject requests read a
+    # truncated file mid-write, got the [] default, and saved it back.
+    tmp = f"{path}.tmp.{os.getpid()}"
+    with open(tmp, "w") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, path)
 
 
 def get_settings():
@@ -177,6 +182,10 @@ def log_comment(author, post_url, post_excerpt, comment_text):
     save_json(COMMENTS_LOG, entries[-500:])
 
 
+import threading
+_TW_QUEUE_LOCK = threading.Lock()
+
+
 def get_tw_queue() -> list:
     return load_json(TW_QUEUE_FILE, [])
 
@@ -185,6 +194,11 @@ def save_tw_queue(q: list):
 
 def add_to_tw_queue(items: list):
     import uuid
+    with _TW_QUEUE_LOCK:
+        return _add_to_tw_queue_locked(items, uuid)
+
+
+def _add_to_tw_queue_locked(items: list, uuid):
     q = get_tw_queue()
     existing_urls = {it["tweet_url"] for it in q}
     now = datetime.now(timezone.utc).isoformat()
@@ -735,6 +749,33 @@ def twitter_queue_json():
     return jsonify(get_tw_queue())
 
 
+@app.route("/twitter/queue/reject-older-than/<int:days>", methods=["POST"])
+def twitter_queue_reject_old(days):
+    """Bulk-reject pending replies older than N days — one locked pass."""
+    from flask import jsonify
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    with _TW_QUEUE_LOCK:
+        q = get_tw_queue()
+        n = 0
+        for it in q:
+            if it.get("status") == "pending":
+                try:
+                    if datetime.fromisoformat(it["generated_at"]) < cutoff:
+                        it["status"] = "rejected"
+                        n += 1
+                except Exception:
+                    pass
+        save_tw_queue(q)
+    return jsonify({"rejected": n})
+
+
+@app.route("/twitter/generate-now", methods=["POST"])
+def twitter_generate_now():
+    from flask import jsonify
+    threading.Thread(target=_run_twitter_generate, daemon=True).start()
+    return jsonify({"ok": True, "note": "generation started in background"})
+
+
 @app.route("/comments/log.json")
 def comments_log_json():
     """Full LinkedIn comments log (last 500) — for auditing published comments."""
@@ -751,40 +792,43 @@ def agent_userscript():
 
 @app.route("/twitter/queue/<item_id>/approve", methods=["POST"])
 def twitter_queue_approve(item_id):
-    q = get_tw_queue()
-    reply = ""
-    for it in q:
-        if it["id"] == item_id:
-            it["status"] = "approved"
-            reply = it.get("reply", "")
-            break
-    save_tw_queue(q)
+    with _TW_QUEUE_LOCK:
+        q = get_tw_queue()
+        reply = ""
+        for it in q:
+            if it["id"] == item_id:
+                it["status"] = "approved"
+                reply = it.get("reply", "")
+                break
+        save_tw_queue(q)
     from flask import jsonify
     return jsonify({"ok": True, "reply": reply})
 
 
 @app.route("/twitter/queue/<item_id>/reject", methods=["POST"])
 def twitter_queue_reject(item_id):
-    q = get_tw_queue()
-    for it in q:
-        if it["id"] == item_id:
-            it["status"] = "rejected"
-            break
-    save_tw_queue(q)
+    with _TW_QUEUE_LOCK:
+        q = get_tw_queue()
+        for it in q:
+            if it["id"] == item_id:
+                it["status"] = "rejected"
+                break
+        save_tw_queue(q)
     from flask import jsonify
     return jsonify({"ok": True})
 
 
 @app.route("/twitter/queue/<item_id>/posted", methods=["POST"])
 def twitter_queue_posted(item_id):
-    q = get_tw_queue()
-    for it in q:
-        if it["id"] == item_id:
-            it["status"] = "posted"
-            it["posted_at"] = datetime.now(timezone.utc).isoformat()
-            log_tw_reply(it["author"], it["tweet_url"], it["tweet_text"], it["reply"])
-            break
-    save_tw_queue(q)
+    with _TW_QUEUE_LOCK:
+        q = get_tw_queue()
+        for it in q:
+            if it["id"] == item_id:
+                it["status"] = "posted"
+                it["posted_at"] = datetime.now(timezone.utc).isoformat()
+                log_tw_reply(it["author"], it["tweet_url"], it["tweet_text"], it["reply"])
+                break
+        save_tw_queue(q)
     from flask import jsonify
     return jsonify({"ok": True})
 
