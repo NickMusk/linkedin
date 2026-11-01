@@ -37,9 +37,11 @@ from follow_vcs import chrome_open, chrome_js
 import daily_follow
 
 DASHBOARD = "https://linkedin-commenter-kwha.onrender.com"
-BATCH_RANGE = (5, 10)            # replies per batch
-TWEET_DELAY = (5, 20)            # seconds between tweets
-BATCH_PAUSE_MIN = (40, 80)       # minutes between batches
+# Step back up 2026-09-27 (one notch above the post-warning floor).
+# Full restore (5,10)/(5,20)/(40,80) after a quiet week without X warnings.
+BATCH_RANGE = (5, 8)             # replies per batch
+TWEET_DELAY = (15, 40)           # seconds between tweets
+BATCH_PAUSE_MIN = (70, 120)      # minutes between batches
 EMPTY_QUEUE_WAIT_MIN = 20        # queue empty — check again sooner
 COMPOSER_TIMEOUT = 25            # seconds for the composer to become clickable
 
@@ -142,13 +144,15 @@ def _record_author(author: str):
 
 
 def _wake_display():
-    """Nudge the display awake — with the screen off macOS freezes Chrome's
-    rendering (occlusion) and the composer never mounts (whole 04:02 batch
-    timed out overnight). Harmless if the display is already on."""
+    """Wake the display AND hold it awake for the whole batch (~6 min):
+    with the screen off macOS freezes Chrome's rendering (occlusion) and the
+    composer never mounts. A detached caffeinate keeps it lit long enough to
+    post the batch, then the display sleeps again on its own."""
     import subprocess
     try:
-        subprocess.run(["caffeinate", "-u", "-t", "3"], timeout=10)
-        time.sleep(2)
+        subprocess.Popen(["caffeinate", "-u", "-d", "-t", "360"],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        time.sleep(3)
     except Exception:
         pass
 
@@ -171,11 +175,89 @@ def _fresh(item: dict) -> bool:
         return False
 
 
+# Growth lane: replies to fresh tweets of big authors must land while the
+# tweet is still surging. Checked every GROWTH_TICK_SEC, posted immediately.
+GROWTH_TICK_SEC = 240
+GROWTH_MAX_AGE_MIN = 45          # older than this = the window is gone, reject
+GROWTH_PER_TICK = 3
+GROWTH_DAILY_CAP = 30
+_GROWTH_DAY = {"date": "", "count": 0}
+
+
+def growth_items() -> list[dict]:
+    failures = _load_failures()
+    import datetime as _dt
+    now = _dt.datetime.now(_dt.timezone.utc)
+    fresh, stale = [], []
+    for it in fetch_queue():
+        if it.get("lane") != "growth" or it.get("status") != "pending":
+            continue
+        if not (it.get("reply") or "").strip() or failures.get(it["id"], 0) >= MAX_FAILURES:
+            continue
+        try:
+            age_min = (now - _dt.datetime.fromisoformat(it["generated_at"])).total_seconds() / 60
+        except Exception:
+            continue
+        (fresh if age_min <= GROWTH_MAX_AGE_MIN else stale).append(it)
+    for it in stale:  # window gone — reject so the queue stays honest
+        try:
+            mark_rejected(it["id"])
+        except Exception:
+            pass
+    fresh.sort(key=lambda x: x.get("generated_at", ""))
+    return fresh
+
+
+def run_growth_tick() -> int:
+    import datetime as _dt
+    today = _dt.date.today().isoformat()
+    if _GROWTH_DAY["date"] != today:
+        _GROWTH_DAY.update(date=today, count=0)
+    if _GROWTH_DAY["count"] >= GROWTH_DAILY_CAP:
+        return 0
+    items = growth_items()
+    if not items:
+        return 0
+    recent = _load_recent_authors()
+    posted = 0
+    for it in items:
+        if posted >= GROWTH_PER_TICK or _GROWTH_DAY["count"] >= GROWTH_DAILY_CAP:
+            break
+        a = (it.get("author_username") or "").lower()
+        if a in recent:
+            continue
+        if GATE_BAD_RE.search(it.get("reply") or ""):
+            try:
+                mark_rejected(it["id"])
+            except Exception:
+                pass
+            continue
+        print(f"  [growth] @{it['author_username']} ... ", end="", flush=True)
+        try:
+            result = post_one(it)
+        except Exception as e:
+            result = f"error: {e}"
+        print(result)
+        if result in ("posted", "duplicate", "unknown"):
+            posted += 1
+            _GROWTH_DAY["count"] += 1
+            _SESSION["posted"] += 1
+            _record_author(a)
+            recent.add(a)
+            try:
+                mark_posted(it["id"])
+            except Exception as e:
+                print(f"    (не отмечен на дашборде: {e})")
+            time.sleep(random.uniform(20, 40))
+    return posted
+
+
 def pending_items() -> list[dict]:
     failures = _load_failures()
     items = [
         it for it in fetch_queue()
-        if it.get("status") in ("pending", "approved")
+        if it.get("lane") != "growth"
+        and it.get("status") in ("pending", "approved")
         and (it.get("reply") or "").strip()
         and len(it["reply"]) <= 280
         and STATUS_RE.search(it.get("tweet_url") or "")
@@ -223,6 +305,7 @@ def post_one(item: dict) -> str:
 
 def run_batch(dry_run: bool = False) -> int:
     items = pending_items()
+    _SESSION["queue"] = len(items)
     if not items:
         print(f"[{datetime.now():%H:%M}] Очередь пуста.")
         return 0
@@ -249,6 +332,26 @@ def run_batch(dry_run: bool = False) -> int:
         return 0
 
     _wake_display()
+    # Cookie hygiene for the headless transport: safety-net refresh every
+    # REFRESH_EVERY_H hours, immediate refresh when X shows the login wall.
+    try:
+        import gb_browser
+        from pathlib import Path as _P
+        if (_P(__file__).parent / "use_headless.flag").exists() and gb_browser.available():
+            gb_browser.refresh_cookies(force=False)
+            gb_browser.navigate("https://x.com/home")
+            time.sleep(4)
+            if gb_browser.logged_out():
+                print("  [cookies] X разлогинил headless-сессию — реимпорт из Chrome")
+                gb_browser.refresh_cookies(force=True)
+                time.sleep(2)
+                gb_browser.navigate("https://x.com/home")
+                time.sleep(4)
+                if gb_browser.logged_out():
+                    print("  [cookies] реимпорт не помог — батч пропущен, нужен вход в X в Chrome")
+                    return 0
+    except Exception as e:
+        print(f"  [cookies] проверка не удалась ({e}) — продолжаю как есть")
     failures = _load_failures()
     posted = 0
     timeouts_in_a_row = 0
@@ -296,6 +399,36 @@ def run_batch(dry_run: bool = False) -> int:
     return posted
 
 
+PAUSE_FLAG = Path(__file__).parent / "poster_pause.flag"
+STATUS_FILE = Path(__file__).parent / "poster_status.json"
+_SESSION = {"started_at": None, "batches": 0, "posted": 0, "queue": 0, "last_batch_at": None}
+
+
+def _write_status(state: str):
+    import datetime as _dt
+    try:
+        STATUS_FILE.write_text(json.dumps({
+            "state": state,
+            "updated_at": _dt.datetime.now().isoformat(timespec="seconds"),
+            **_SESSION,
+        }))
+    except Exception:
+        pass
+
+
+def _honor_pause():
+    """Block while the pause flag exists (set from the menu bar app)."""
+    was = False
+    while PAUSE_FLAG.exists():
+        if not was:
+            print("[пауза] включена из менюбара — жду")
+            was = True
+        _write_status("paused")
+        time.sleep(15)
+    if was:
+        print("[пауза] снята — продолжаю")
+
+
 LOCK_FILE = Path(__file__).parent / "post_replies.lock"
 
 
@@ -329,29 +462,52 @@ def main():
         print("⚠️  Chrome: включи View → Developer → Allow JavaScript from Apple Events")
         sys.exit(1)
 
+    import datetime as _dt
+    _SESSION["started_at"] = _dt.datetime.now().isoformat(timespec="seconds")
+    _write_status("starting")
     while True:
-        # A network blip (DNS, dashboard hiccup) must never kill the loop —
-        # log it, wait, try again.
+        # Dual lane. Growth replies go out within minutes of the tweet;
+        # VC/regular keep the old batch rhythm. A network blip must never
+        # kill the loop — log it, wait, try again.
         try:
-            run_batch(dry_run=dry_run)
+            _honor_pause()
+            if not dry_run:
+                g = run_growth_tick()
+                if g:
+                    print(f"[{datetime.now():%H:%M}] growth: +{g}")
 
-            if not dry_run and not daily_follow.done_today():
-                print(f"[{datetime.now():%H:%M}] Дневные подписки на VC...")
-                try:
-                    daily_follow.run_daily()
-                except Exception as e:
-                    print(f"  daily_follow error: {e}")
+            next_bulk = _SESSION.get("_next_bulk", 0)
+            if time.time() >= next_bulk or once or dry_run:
+                _write_status("posting")
+                posted = run_batch(dry_run=dry_run)
+                _SESSION["batches"] += 1
+                _SESSION["posted"] += posted or 0
+                _SESSION["last_batch_at"] = _dt.datetime.now().isoformat(timespec="seconds")
+
+                if not dry_run and not daily_follow.done_today():
+                    print(f"[{datetime.now():%H:%M}] Дневные подписки на VC...")
+                    try:
+                        daily_follow.run_daily()
+                    except Exception as e:
+                        print(f"  daily_follow error: {e}")
+
+                pause = random.uniform(*BATCH_PAUSE_MIN) * 60
+                if not pending_items():
+                    pause = EMPTY_QUEUE_WAIT_MIN * 60
+                _SESSION["_next_bulk"] = time.time() + pause
+                print(f"[{datetime.now():%H:%M}] Следующий bulk-батч через {pause / 60:.0f} мин.")
 
             if once or dry_run:
                 break
-            pause = random.uniform(*BATCH_PAUSE_MIN) * 60
-            if not pending_items():
-                pause = EMPTY_QUEUE_WAIT_MIN * 60
         except Exception as e:
             print(f"[{datetime.now():%H:%M}] Сбой цикла ({type(e).__name__}: {e}) — повтор через 5 мин.")
-            pause = 300
-        print(f"[{datetime.now():%H:%M}] Пауза {pause / 60:.0f} мин.\n")
-        time.sleep(pause)
+            time.sleep(300)
+        _write_status("watching growth lane")
+        slept = 0
+        while slept < GROWTH_TICK_SEC:
+            _honor_pause()
+            time.sleep(30)
+            slept += 30
 
 
 if __name__ == "__main__":

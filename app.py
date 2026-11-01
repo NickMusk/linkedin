@@ -212,6 +212,7 @@ def _add_to_tw_queue_locked(items: list, uuid):
             "tweet_url": it["tweet_url"],
             "tweet_text": it.get("text", "")[:280],
             "reply": it.get("draft", ""),
+            "lane": it.get("lane", ""),
             "likes": it.get("likes", 0),
             "vc": bool(it.get("vc")),
             "tweet_posted_at": it.get("posted_at", ""),
@@ -731,6 +732,45 @@ def _run_twitter_generate():
         log.info(f"Twitter: added {len(publishable)} replies to queue (total {added}).")
     except Exception as e:
         log.error(f"Twitter generate error: {e}", exc_info=True)
+
+
+GROWTH_POLL_MIN = 15
+GROWTH_ACTIVE_UTC = (13, 7)   # 13:00 UTC (~6am SF) .. 07:00 UTC (~11pm SF) — US waking hours
+
+
+def _growth_window_open() -> bool:
+    h = datetime.now(timezone.utc).hour
+    start, end = GROWTH_ACTIVE_UTC
+    return h >= start or h < end
+
+
+def growth_loop():
+    """Fast reply lane: fresh tweets from growth_authors.json -> replies in
+    the queue within minutes, so the local poster can land them while the
+    tweet is still surging (~80% of impressions happen in the first 2h)."""
+    log.info(f"Growth loop started (every {GROWTH_POLL_MIN}m during US waking hours).")
+    while True:
+        try:
+            if _growth_window_open():
+                from fetch_growth_tweets import fetch_growth_tweets
+                from generate_replies import generate_replies
+                from knowledge_base import build_context
+                tweets = fetch_growth_tweets()
+                if tweets:
+                    items = generate_replies(tweets, build_context())
+                    publishable = []
+                    for it in items:
+                        if it.get("skip") or not it.get("draft", "").strip():
+                            continue
+                        it["tweet_url"] = it.get("url", "")
+                        it["lane"] = "growth"
+                        publishable.append(it)
+                    if publishable:
+                        add_to_tw_queue(publishable)
+                        log.info(f"Growth: +{len(publishable)} fresh replies queued.")
+        except Exception as e:
+            log.error(f"Growth loop error: {e}", exc_info=True)
+        time.sleep(GROWTH_POLL_MIN * 60)
 
 
 def twitter_generate_loop():
@@ -1683,6 +1723,7 @@ if __name__ == "__main__":
         threading.Thread(target=twitter_loop, daemon=True, name="twitter").start()
     else:
         threading.Thread(target=twitter_generate_loop, daemon=True, name="twitter_gen").start()
+        threading.Thread(target=growth_loop, daemon=True, name="growth").start()
     # OWN_X_POST=0 → no autonomous own-tweet posting (auto-replies/comments
     # are unaffected — they run through the queue + local browser poster).
     if os.environ.get("OWN_X_POST", "1") == "1":

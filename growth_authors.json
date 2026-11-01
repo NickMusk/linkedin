@@ -1,0 +1,12 @@
+{
+  "_comment": "Growth-lane targets: active AI/startup/build-in-public authors, roughly 20k-900k followers, posting daily. Pruned by the weekly metrics loop; edit freely — the fetcher reloads on every poll.",
+  "authors": [
+    "emollick", "gregisenberg", "levelsio", "arvidkahl", "tdinh_me",
+    "dannypostmaa", "marc_louvion", "thisiskp_", "bentossell", "stephsmithio",
+    "swyx", "mckaywrigley", "alexalbert__", "amasad", "rowancheung",
+    "minchoi", "petergyang", "rileybrown", "kregenrek", "officiallogank",
+    "lennysan", "gergelyorosz", "shl", "dharmesh", "hnshah",
+    "garrytan", "paulg", "Jason", "csallen", "yongfook",
+    "LinusEkenstam", "heyBarsee", "joshbersin", "alexhormozi"
+  ]
+}
