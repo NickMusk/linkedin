@@ -384,6 +384,7 @@ def run_batch(dry_run: bool = False) -> int:
         if result in ("posted", "duplicate", "unknown"):
             posted += 1
             timeouts_in_a_row = 0
+            _SESSION["_aborts"] = 0
             failures.pop(it["id"], None)
             _record_author(it.get("author_username", ""))
             try:
@@ -397,6 +398,13 @@ def run_batch(dry_run: bool = False) -> int:
             timeouts_in_a_row += 1
             if timeouts_in_a_row >= 2:
                 print("  Chrome не рендерит (экран погашен?) — батч прерван, повтор позже.")
+                _SESSION["_aborts"] = _SESSION.get("_aborts", 0) + 1
+                if _SESSION["_aborts"] >= 3:
+                    try:
+                        import attention
+                        attention.add("Твиттер-постер: 3 батча подряд замёрзли (окно перекрыто). Нужен перезапуск Chrome с флагом — скажи Клоду.")
+                    except Exception:
+                        pass
                 break
         else:
             failures[it["id"]] = failures.get(it["id"], 0) + 1

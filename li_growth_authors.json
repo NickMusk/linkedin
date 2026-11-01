@@ -1,0 +1,21 @@
+{
+  "_comment": "LinkedIn growth lane: big active authors whose fresh posts we comment within ~90 minutes. Slugs unverified ones just return no posts — prune/extend freely, the fetcher reloads each poll.",
+  "authors": [
+    {"name": "Andrew Ng", "linkedin_url": "https://www.linkedin.com/in/andrewyng/"},
+    {"name": "Allie K. Miller", "linkedin_url": "https://www.linkedin.com/in/alliekmiller/"},
+    {"name": "Justin Welsh", "linkedin_url": "https://www.linkedin.com/in/justinwelsh/"},
+    {"name": "Lenny Rachitsky", "linkedin_url": "https://www.linkedin.com/in/lennyrachitsky/"},
+    {"name": "Greg Isenberg", "linkedin_url": "https://www.linkedin.com/in/gisenberg/"},
+    {"name": "Reid Hoffman", "linkedin_url": "https://www.linkedin.com/in/reidhoffman/"},
+    {"name": "Bernard Marr", "linkedin_url": "https://www.linkedin.com/in/bernardmarr/"},
+    {"name": "Sahil Bloom", "linkedin_url": "https://www.linkedin.com/in/sahilbloom/"},
+    {"name": "Codie Sanchez", "linkedin_url": "https://www.linkedin.com/in/codiesanchez/"},
+    {"name": "Alex Lieberman", "linkedin_url": "https://www.linkedin.com/in/alex-lieberman/"},
+    {"name": "Dan Martell", "linkedin_url": "https://www.linkedin.com/in/dmartell/"},
+    {"name": "Zain Kahn", "linkedin_url": "https://www.linkedin.com/in/zainkahn/"},
+    {"name": "Adam Grant", "linkedin_url": "https://www.linkedin.com/in/adammgrant/"},
+    {"name": "Sarah Guo", "linkedin_url": "https://www.linkedin.com/in/sarahxguo/"},
+    {"name": "Deedy Das", "linkedin_url": "https://www.linkedin.com/in/debarghyadas/"},
+    {"name": "Hunter Walk", "linkedin_url": "https://www.linkedin.com/in/hunterwalk/"}
+  ]
+}

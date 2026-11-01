@@ -773,6 +773,73 @@ def growth_loop():
         time.sleep(GROWTH_POLL_MIN * 60)
 
 
+LI_GROWTH_POLL_MIN = 30
+LI_GROWTH_PER_CYCLE = 3
+LI_GROWTH_DAILY_CAP = 12
+LI_GROWTH_STATE = os.path.join(DATA_DIR, "li_growth_state.json")
+
+
+def li_growth_loop():
+    """LinkedIn growth lane: comment on <90m-old posts of big authors while
+    the post is still surging. Mirrors the Twitter growth lane, but LinkedIn
+    posting is API-side (Unipile), so the whole cycle lives on the server."""
+    import random as _rnd
+    log.info(f"LI growth loop started (every {LI_GROWTH_POLL_MIN}m during US waking hours).")
+    while True:
+        try:
+            if _growth_window_open():
+                _li_growth_cycle(_rnd)
+        except Exception as e:
+            log.error(f"LI growth loop error: {e}", exc_info=True)
+        time.sleep(LI_GROWTH_POLL_MIN * 60)
+
+
+def _li_growth_cycle(_rnd):
+    from fetch_li_growth import fetch_li_growth_posts
+    from generate_comments import generate_comments
+    from knowledge_base import build_context, save_example
+    from publish import _extract_activity_id, _get_social_id, _post_comment
+
+    st = load_json(LI_GROWTH_STATE, {})
+    today = today_str()
+    if st.get("date") != today:
+        st = {"date": today, "count": 0, "done_urls": st.get("done_urls", [])[-300:]}
+    if st["count"] >= LI_GROWTH_DAILY_CAP:
+        return
+
+    posts = fetch_li_growth_posts()
+    posts = [p for p in posts if p["url"] not in st["done_urls"]]
+    if not posts:
+        return
+    log.info(f"LI growth: {len(posts)} fresh posts, generating...")
+    items = generate_comments(posts, build_context())
+    posted = 0
+    for it in items:
+        if posted >= LI_GROWTH_PER_CYCLE or st["count"] >= LI_GROWTH_DAILY_CAP:
+            break
+        if it.get("skip") or len(it.get("draft", "").strip()) < 2:
+            continue
+        url, text = it["url"], it["draft"].strip()
+        aid = _extract_activity_id(url)
+        sid = _get_social_id(aid) if aid else None
+        if not sid:
+            continue
+        ok, detail = _post_comment(sid, text)  # pre-send gate lives inside
+        st["done_urls"].append(url)
+        if ok:
+            posted += 1
+            st["count"] += 1
+            log_comment(it.get("author", "?"), url, it.get("text", ""), text)
+            save_example(it.get("text", url), text)
+            log.info(f"  LI growth OK [{st['count']}/{LI_GROWTH_DAILY_CAP}]: {it.get('author','?')[:30]}")
+            save_json(LI_GROWTH_STATE, st)
+            time.sleep(_rnd.randint(240, 540))
+        else:
+            log.warning(f"  LI growth fail: {detail[:120]}")
+            save_json(LI_GROWTH_STATE, st)
+    save_json(LI_GROWTH_STATE, st)
+
+
 def twitter_generate_loop():
     log.info("Twitter generate loop started (2h in US waking hours / 6h overnight).")
     while True:
@@ -1724,6 +1791,7 @@ if __name__ == "__main__":
     else:
         threading.Thread(target=twitter_generate_loop, daemon=True, name="twitter_gen").start()
         threading.Thread(target=growth_loop, daemon=True, name="growth").start()
+    threading.Thread(target=li_growth_loop, daemon=True, name="li_growth").start()
     # OWN_X_POST=0 → no autonomous own-tweet posting (auto-replies/comments
     # are unaffected — they run through the queue + local browser poster).
     if os.environ.get("OWN_X_POST", "1") == "1":
