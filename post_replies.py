@@ -49,7 +49,7 @@ FAILURES_FILE = Path(__file__).parent / "post_failures.json"
 MAX_FAILURES = 3
 # Replying to a weeks-old tweet reads as bot behavior — the queue has a long
 # backlog, only post replies generated in the last few days.
-MAX_ITEM_AGE_DAYS = 5
+MAX_ITEM_AGE_DAYS = 2  # tightened 2026-11-01
 # One reply per author per this window: the VC pass puts many tweets of the
 # same person into the queue, and replying to them batch after batch is spam.
 AUTHOR_COOLDOWN_HOURS = 20

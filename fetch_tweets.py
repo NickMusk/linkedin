@@ -31,7 +31,7 @@ def _parse_tweet_date(created: str):
         dt = dt.replace(tzinfo=timezone.utc)
     return dt
 
-MAX_TWEET_AGE_DAYS = 2
+MAX_TWEET_AGE_DAYS = 1  # tightened 2026-11-01: fresher replies read better even for the VC lane
 SEEN_TWEETS_FILE = os.path.join(os.path.dirname(__file__), "seen_tweets.json")
 
 TWITTER_KEYWORDS = [
