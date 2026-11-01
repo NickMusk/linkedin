@@ -774,13 +774,13 @@ def growth_loop():
 
 
 def twitter_generate_loop():
-    log.info("Twitter generate loop started (every 6h, queue only — no auto-posting).")
+    log.info("Twitter generate loop started (2h in US waking hours / 6h overnight).")
     while True:
         try:
             _run_twitter_generate()
         except Exception as e:
             log.error(f"Twitter generate loop error: {e}", exc_info=True)
-        time.sleep(6 * 3600)
+        time.sleep(2 * 3600 if _growth_window_open() else 6 * 3600)
 
 
 @app.route("/twitter/queue.json")

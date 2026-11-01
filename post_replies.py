@@ -264,8 +264,15 @@ def pending_items() -> list[dict]:
         and failures.get(it["id"], 0) < MAX_FAILURES
         and _fresh(it)
     ]
-    # VC people first; inside each group keep dashboard order
-    items.sort(key=lambda it: not _is_vc_item(it))
+    # VC people first; inside each group — freshest first (reach decays fast)
+    def _key(it):
+        import datetime as _dt
+        try:
+            ts = _dt.datetime.fromisoformat(it["generated_at"]).timestamp()
+        except Exception:
+            ts = 0.0
+        return (not _is_vc_item(it), -ts)
+    items.sort(key=_key)
     return items
 
 
