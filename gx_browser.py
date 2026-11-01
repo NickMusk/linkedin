@@ -38,3 +38,21 @@ def evaluate(js_code: str) -> str:
     if not resp.get("ok"):
         raise RuntimeError(f"extension eval: {resp.get('error', '?')}")
     return resp.get("value", "")
+
+
+def available_patient(max_wait: int = 75) -> bool:
+    """Service worker расширения спит между делами и просыпается будильником
+    раз в минуту. Если мост жив, а расширение не подключено — ждём пробуждения,
+    вместо того чтобы падать в оконный фоллбек и плодить окна."""
+    import time
+    deadline = time.time() + max_wait
+    while time.time() < deadline:
+        if available():
+            return True
+        try:
+            with urllib.request.urlopen(f"{BRIDGE}/health", timeout=3):
+                pass
+        except Exception:
+            return False  # моста нет — ждать нечего
+        time.sleep(5)
+    return False

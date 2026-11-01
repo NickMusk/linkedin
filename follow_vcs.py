@@ -95,6 +95,11 @@ def _ensure_window():
         """)
         if exists == "yes":
             return _WIN_ID
+    try:
+        import attention
+        attention.add("Расширение Tener Poster Bridge недоступно — постер временно работает через окно Chrome. Проверь расширение (chrome://extensions) или плашку отладчика.")
+    except Exception:
+        pass
     _WIN_ID = jxa("""
         const chrome = Application('Google Chrome');
         const w = chrome.Window().make();
@@ -132,7 +137,7 @@ def _cdp():
     # Chrome Ника, chrome.debugger, фоновая вкладка, ноль окон.
     try:
         import gx_browser
-        if gx_browser.available():
+        if gx_browser.available_patient():
             mod = gx_browser
     except Exception:
         pass
