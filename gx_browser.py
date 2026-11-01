@@ -1,0 +1,40 @@
+"""Extension transport (the real Codex way): the poster talks to the local
+bridge, the bridge talks to the Tener Poster Bridge Chrome extension, the
+extension drives its pinned background tab via chrome.debugger in Nick's real
+Chrome. No windows, no focus changes, real session."""
+
+import json
+import urllib.request
+
+BRIDGE = "http://127.0.0.1:8765"
+
+
+def _post(cmd: dict, timeout: int = 70) -> dict:
+    req = urllib.request.Request(
+        f"{BRIDGE}/cmd", data=json.dumps(cmd).encode(),
+        headers={"Content-Type": "application/json"}, method="POST")
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.loads(r.read())
+
+
+def available() -> bool:
+    try:
+        with urllib.request.urlopen(f"{BRIDGE}/health", timeout=3) as r:
+            if not json.loads(r.read()).get("extension_connected"):
+                return False
+        return _post({"cmd": "status"}, timeout=15).get("ok", False)
+    except Exception:
+        return False
+
+
+def navigate(url: str):
+    resp = _post({"cmd": "navigate", "url": url})
+    if not resp.get("ok"):
+        raise RuntimeError(f"extension navigate: {resp.get('error', '?')}")
+
+
+def evaluate(js_code: str) -> str:
+    resp = _post({"cmd": "eval", "js": js_code})
+    if not resp.get("ok"):
+        raise RuntimeError(f"extension eval: {resp.get('error', '?')}")
+    return resp.get("value", "")

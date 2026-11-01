@@ -99,26 +99,94 @@ def _ensure_window():
         const chrome = Application('Google Chrome');
         const w = chrome.Window().make();
         w.activeTab.url = "about:blank";
+        // Small window tucked into the bottom-right corner: keeps rendering
+        // (a minimized or zero-size window freezes X's composer) but stays
+        // out of the way of whatever the user is doing.
+        ObjC.import('AppKit');
+        const f = $.NSScreen.mainScreen.frame;
+        const sw = f.size.width, sh = f.size.height;
+        // Hang the window off the bottom-right edge: only a ~120px corner stays
+        // visible (keeps rendering alive), the rest sits offscreen so it never
+        // covers the user's working area.
+        w.bounds = {x: sw - 140, y: sh - 160, width: 860, height: 640};
         w.id();
     """).strip()
     return _WIN_ID
 
 
+_TRANSPORT_CACHE = {"mod": None, "ts": 0}
+
+
+def _cdp():
+    """Pick the best transport, best first:
+    1. gstack headless daemon with imported X cookies (gb_browser) — no Chrome
+       windows at all, works with the screen off;
+    2. CDP port 9222 on the user's Chrome (blocked on default profiles since
+       Chrome 136, kept for custom setups);
+    3. None -> callers fall back to the legacy AppleScript window."""
+    import time as _t
+    if _TRANSPORT_CACHE["mod"] is not None and _t.time() - _TRANSPORT_CACHE["ts"] < 300:
+        return _TRANSPORT_CACHE["mod"]
+    mod = None
+    # 0. Extension transport (настоящий Codex-путь): расширение в реальном
+    # Chrome Ника, chrome.debugger, фоновая вкладка, ноль окон.
+    try:
+        import gx_browser
+        if gx_browser.available():
+            mod = gx_browser
+    except Exception:
+        pass
+    # Headless transport is OPT-IN (use_headless.flag): x.com bot-blocks the
+    # headless browser (empty 403 pages), and masking it would be bot-check
+    # circumvention — not doing that. Real-Chrome paths below stay default.
+    from pathlib import Path as _P
+    if mod is None and (_P(__file__).parent / "use_headless.flag").exists():
+        try:
+            import gb_browser
+            if gb_browser.available():
+                mod = gb_browser
+        except Exception:
+            pass
+    if mod is None:
+        try:
+            import cdp_chrome
+            if cdp_chrome.available():
+                mod = cdp_chrome
+        except Exception:
+            pass
+    _TRANSPORT_CACHE.update(mod=mod, ts=_t.time())
+    return mod
+
+
 def chrome_open(url):
+    cdp = _cdp()
+    if cdp is not None:
+        cdp.navigate(url)
+        return
     win_id = _ensure_window()
     jxa(f"""
         const chrome = Application('Google Chrome');
         const w = chrome.windows().find(w => String(w.id()) === "{win_id}");
         w.activeTab.url = {json.dumps(url)};
+        if (w.minimized()) w.minimized = false;
+        // keep our window at the BOTTOM of Chrome's window stack so it never
+        // covers the user's own Chrome windows
+        try {{ w.index = chrome.windows().length; }} catch (e) {{}}
     """)
 
 
 def chrome_js(js_code):
+    cdp = _cdp()
+    if cdp is not None:
+        return cdp.evaluate(js_code)
     win_id = _ensure_window()
+    # x.com calls window.focus() when the composer opens, which raises our
+    # window above the user's Chrome windows — neuter it on every evaluation.
+    guarded = "try{window.focus=function(){}}catch(e){};" + js_code
     return jxa(f"""
         const chrome = Application('Google Chrome');
         const w = chrome.windows().find(w => String(w.id()) === "{win_id}");
-        chrome.execute(w.activeTab, {{ javascript: {json.dumps(js_code)} }});
+        chrome.execute(w.activeTab, {{ javascript: {json.dumps(guarded)} }});
     """)
 
 
@@ -135,6 +203,10 @@ FOLLOW_JS_TEMPLATE = """
   const text = document.body.innerText;
   if (text.includes("This account doesn") || text.includes("Account suspended")) return "missing";
   if (col.querySelector('button[data-testid$="-unfollow"]')) return "already";
+  // protected account with a follow request already sent
+  if ([...col.querySelectorAll('button')].some(b =>
+      /^pending/i.test((b.innerText || '').trim()) ||
+      /^pending/i.test(b.getAttribute('aria-label') || ''))) return "already";
   const buttons = [...col.querySelectorAll('button[data-testid$="-follow"]')];
   const target = buttons.find(b => (b.getAttribute("aria-label") || "").toLowerCase().includes("@HANDLE".toLowerCase())) || buttons[0];
   if (!target) return "loading";

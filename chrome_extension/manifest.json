@@ -1,0 +1,8 @@
+{
+  "manifest_version": 3,
+  "name": "Tener Poster Bridge",
+  "version": "1.0",
+  "description": "Drives one background tab for the Tener social poster via chrome.debugger (Codex-style). Talks only to localhost.",
+  "permissions": ["debugger", "tabs", "alarms", "storage"],
+  "background": { "service_worker": "background.js" }
+}
