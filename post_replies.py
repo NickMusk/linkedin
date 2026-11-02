@@ -491,6 +491,16 @@ def main():
                 g = run_growth_tick()
                 if g:
                     print(f"[{datetime.now():%H:%M}] growth: +{g}")
+                # f4f lane: first followers > list building, so it runs
+                # before the bulk batch and before the VC follows and takes
+                # the daily follow budget first.
+                try:
+                    import f4f
+                    n = f4f.run_tick(post_one)
+                    if n:
+                        print(f"[{datetime.now():%H:%M}] f4f: +{n}")
+                except Exception as e:
+                    print(f"  f4f error: {type(e).__name__}: {e}")
 
             next_bulk = _SESSION.get("_next_bulk", 0)
             if time.time() >= next_bulk or once or dry_run:
