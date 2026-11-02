@@ -45,10 +45,15 @@ class PosterBar(rumps.App):
         self.m_queue = rumps.MenuItem("Очередь: …")
         self.m_tw_today = rumps.MenuItem("Twitter сегодня: …")
         self.m_li_today = rumps.MenuItem("LinkedIn сегодня: …")
+        self.m_att = [rumps.MenuItem("•"), rumps.MenuItem("•"), rumps.MenuItem("•")]
+        self.m_att_clear = rumps.MenuItem("Очистить уведомления", callback=self.clear_attention)
         self.m_toggle = rumps.MenuItem("⏸ Пауза", callback=self.toggle_pause)
         self.m_dash = rumps.MenuItem("Открыть дашборд", callback=self.open_dash)
-        self.menu = [self.m_state, self.m_posted, self.m_queue, None,
-                     self.m_tw_today, self.m_li_today, None,
+        self.m_hdr_tw = rumps.MenuItem("𝕏  TWITTER")
+        self.m_hdr_li = rumps.MenuItem("in  LINKEDIN")
+        self.menu = [self.m_att[0], self.m_att[1], self.m_att[2], self.m_att_clear, None,
+                     self.m_hdr_tw, self.m_state, self.m_posted, self.m_queue, self.m_tw_today, None,
+                     self.m_hdr_li, self.m_li_today, None,
                      self.m_toggle, self.m_dash, None,
                      rumps.MenuItem("Выйти (иконка, не постер)", callback=rumps.quit_application)]
         self.refresh(None)
@@ -95,29 +100,15 @@ class PosterBar(rumps.App):
             items = []
         if not hasattr(self, "_seen_ts"):
             self._seen_ts = 0.0
-            self._att_menu = []
         for it in items:
             if it["ts"] > self._seen_ts:
                 rumps.notification("Tener автоматика", "нужно действие", it["msg"][:200])
         self._seen_ts = max([it["ts"] for it in items], default=self._seen_ts)
-        # перестроить пункты меню
-        for mi in self._att_menu:
-            try:
-                del self.menu[mi.title]
-            except Exception:
-                pass
-        self._att_menu = []
-        if items:
-            self._badge = "❗"
-            for it in items[-3:]:
-                mi = rumps.MenuItem("❗ " + it["msg"][:70])
-                self.menu.insert_before(self.m_state.title, mi)
-                self._att_menu.append(mi)
-            clear_mi = rumps.MenuItem("Очистить уведомления", callback=self.clear_attention)
-            self.menu.insert_before(self.m_state.title, clear_mi)
-            self._att_menu.append(clear_mi)
-        else:
-            self._badge = ""
+        self._badge = "❗" if items else ""
+        last = items[-3:]
+        for i, slot in enumerate(self.m_att):
+            slot.title = ("❗ " + last[i]["msg"][:70]) if i < len(last) else "•"
+        self.m_att_clear.title = "Очистить уведомления" if items else "Уведомлений нет"
 
     def clear_attention(self, _):
         try:
@@ -138,17 +129,17 @@ class PosterBar(rumps.App):
             q = json.loads(urllib.request.urlopen(
                 DASHBOARD + "twitter/queue.json", timeout=20).read())
             tw = sum(1 for x in q if (x.get("posted_at") or "").startswith(today))
-            self.m_tw_today.title = f"Twitter сегодня: {tw} реплаев"
+            self.m_tw_today.title = f"Реплаев сегодня: {tw}"
         except Exception:
-            self.m_tw_today.title = "Twitter сегодня: — (дашборд молчит)"
+            self.m_tw_today.title = "Реплаев сегодня: — (дашборд молчит)"
         try:
             log = json.loads(urllib.request.urlopen(
                 DASHBOARD + "comments/log.json", timeout=20).read())
             li = sum(1 for c in log
                      if ((c.get("ts") or c.get("timestamp") or "")[:10] == today))
-            self.m_li_today.title = f"LinkedIn сегодня: {li} комм."
+            self.m_li_today.title = f"Комментов сегодня: {li}"
         except Exception:
-            self.m_li_today.title = "LinkedIn сегодня: — (дашборд молчит)"
+            self.m_li_today.title = "Комментов сегодня: — (дашборд молчит)"
 
     def toggle_pause(self, _):
         if PAUSE_FLAG.exists():
