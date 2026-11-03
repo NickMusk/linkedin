@@ -40,6 +40,28 @@ def evaluate(js_code: str) -> str:
     return resp.get("value", "")
 
 
+# --- review session tab: visible, user-facing. Open pages and pre-fill text
+# only; the submit click is always the human's. ---
+
+def session_open(url: str):
+    resp = _post({"cmd": "session_open", "url": url})
+    if not resp.get("ok"):
+        raise RuntimeError(f"session_open: {resp.get('error', '?')}")
+
+
+def session_eval(js_code: str) -> str:
+    resp = _post({"cmd": "session_eval", "js": js_code})
+    if not resp.get("ok"):
+        raise RuntimeError(f"session_eval: {resp.get('error', '?')}")
+    return resp.get("value", "")
+
+
+def session_close():
+    resp = _post({"cmd": "session_close"})
+    if not resp.get("ok"):
+        raise RuntimeError(f"session_close: {resp.get('error', '?')}")
+
+
 def available_patient(max_wait: int = 75) -> bool:
     """Service worker расширения спит между делами и просыпается будильником
     раз в минуту. Если мост жив, а расширение не подключено — ждём пробуждения,

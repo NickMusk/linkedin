@@ -63,7 +63,32 @@ async function ensureAttached() {
 
 chrome.debugger.onDetach.addListener((source) => {
   if (source.tabId === tabId) { attached = false; log("detached"); }
+  if (source.tabId === sessionTabId) { sessionAttached = false; }
 });
+
+// --- review session tab: VISIBLE, user-facing. The machine only opens pages
+// and pre-fills text here; submitting is always the human's click. ---
+let sessionTabId = null;
+let sessionAttached = false;
+
+chrome.tabs.onRemoved.addListener((closedId) => {
+  if (closedId === sessionTabId) { sessionTabId = null; sessionAttached = false; }
+});
+
+async function ensureSessionAttached() {
+  if (sessionTabId === null) throw new Error("no session tab");
+  const target = { tabId: sessionTabId };
+  if (sessionAttached) return target;
+  await new Promise((resolve, reject) => {
+    chrome.debugger.attach(target, "1.3", () => {
+      const msg = (chrome.runtime.lastError && chrome.runtime.lastError.message) || "";
+      if (!msg || msg.includes("Another debugger")) resolve();
+      else reject(new Error(msg));
+    });
+  });
+  sessionAttached = true;
+  return target;
+}
 
 async function handle(cmd) {
   const target = await ensureAttached();
@@ -86,6 +111,41 @@ async function handle(cmd) {
   return { ok: false, error: "unknown cmd " + cmd.cmd };
 }
 
+async function handleSession(cmd) {
+  if (cmd.cmd === "session_open") {
+    if (sessionTabId !== null) {
+      try { await chrome.tabs.update(sessionTabId, { url: cmd.url, active: true }); }
+      catch (e) { sessionTabId = null; sessionAttached = false; }
+    }
+    if (sessionTabId === null) {
+      const t = await chrome.tabs.create({ url: cmd.url, active: true });
+      sessionTabId = t.id;
+    }
+    try {
+      const t = await chrome.tabs.get(sessionTabId);
+      await chrome.windows.update(t.windowId, { focused: true });
+    } catch (e) {}
+    return { ok: true, value: "session tab " + sessionTabId };
+  }
+  if (cmd.cmd === "session_eval") {
+    const target = await ensureSessionAttached();
+    const r = await sendCommand(target, "Runtime.evaluate", {
+      expression: cmd.js, returnByValue: true, awaitPromise: false,
+    });
+    if (r.exceptionDetails) return { ok: false, error: JSON.stringify(r.exceptionDetails).slice(0, 300) };
+    const v = r.result && r.result.value;
+    return { ok: true, value: v === undefined || v === null ? "" : String(v) };
+  }
+  if (cmd.cmd === "session_close") {
+    if (sessionTabId !== null) {
+      try { await chrome.tabs.remove(sessionTabId); } catch (e) {}
+      sessionTabId = null; sessionAttached = false;
+    }
+    return { ok: true, value: "closed" };
+  }
+  return null;
+}
+
 function connect() {
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
   try { ws = new WebSocket(WS_URL); } catch (e) { return; }
@@ -94,7 +154,10 @@ function connect() {
     let cmd;
     try { cmd = JSON.parse(ev.data); } catch (e) { return; }
     let resp;
-    try { resp = await handle(cmd); }
+    try {
+      resp = cmd.cmd && cmd.cmd.startsWith("session_") ? await handleSession(cmd) : await handle(cmd);
+      if (resp === null) resp = { ok: false, error: "unknown cmd " + cmd.cmd };
+    }
     catch (e) { resp = { ok: false, error: String(e).slice(0, 300) }; }
     resp.id = cmd.id;
     try { ws.send(JSON.stringify(resp)); } catch (e) {}

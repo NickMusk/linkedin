@@ -52,12 +52,13 @@ class PosterBar(rumps.App):
         self.m_hdr_tw = rumps.MenuItem("𝕏  TWITTER")
         self.m_hdr_li = rumps.MenuItem("in  LINKEDIN")
         self.m_hdr_rd = rumps.MenuItem("◉  REDDIT")
+        self.m_rd_session = rumps.MenuItem("▶ Начать сессию ревью", callback=self.start_reddit_session)
         self.m_rd_next = rumps.MenuItem("Очередь пуста", callback=self.open_reddit)
         self.m_rd_skip = rumps.MenuItem("Пропустить следующий", callback=self.skip_reddit)
         self.menu = [self.m_att[0], self.m_att[1], self.m_att[2], self.m_att_clear, None,
                      self.m_hdr_tw, self.m_state, self.m_posted, self.m_queue, self.m_tw_today, None,
                      self.m_hdr_li, self.m_li_today, None,
-                     self.m_hdr_rd, self.m_rd_next, self.m_rd_skip, None,
+                     self.m_hdr_rd, self.m_rd_session, self.m_rd_next, self.m_rd_skip, None,
                      self.m_toggle, self.m_dash, None,
                      rumps.MenuItem("Выйти (иконка, не постер)", callback=rumps.quit_application)]
         self.refresh(None)
@@ -157,6 +158,14 @@ class PosterBar(rumps.App):
         n = self._reddit_pending()
         self.m_rd_next.title = (f"Открыть следующий тред ({n} в очереди)"
                                 if n else "Очередь пуста")
+
+    def start_reddit_session(self, _):
+        """Guided pass over the queue: tab opens, draft pre-filled, Nick clicks
+        Comment himself, next thread follows. Runs detached, log in logs/."""
+        log = open(BASE / "logs" / "reddit_session.log", "a")
+        subprocess.Popen([str(Path.home() / ".tener-menubar-venv/bin/python"),
+                          str(BASE / "reddit_session.py")],
+                         stdout=log, stderr=log, start_new_session=True)
 
     def open_reddit(self, _):
         """One click: thread opens in the browser, draft lands in the clipboard."""
