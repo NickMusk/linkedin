@@ -1,19 +1,18 @@
 #!/usr/bin/env python3
 """Reddit monitor: find fresh threads worth answering, draft a reply, notify.
 
-READ-ONLY by design. The script never posts to Reddit — undisclosed bot
-participation is astroturfing, and Reddit shadowbans young automated accounts
-anyway. It watches the subreddits below through the official OAuth API,
+Collection goes through Apify (trudax/reddit-scraper-lite, no Reddit keys
+needed); the official OAuth API stays as a fallback when REDDIT_CLIENT_ID /
+REDDIT_CLIENT_SECRET are in .env.
+
+The script never posts to Reddit — undisclosed bot participation is
+astroturfing, and Reddit shadowbans young automated accounts anyway. It
 scores fresh threads against Tener's pitch, drafts a comment for each hit,
-and raises the menu-bar attention flag. Nick reads reddit_leads.md and posts
-himself.
+queues them, and raises the menu-bar attention flag. Nick posts himself:
+`python3 reddit_next.py` opens the next thread with the draft already in
+the clipboard.
 
-One-time setup (~2 min): https://www.reddit.com/prefs/apps -> create app ->
-type "script" (name/redirect are anything). Add to .env:
-    REDDIT_CLIENT_ID=<under the app name>
-    REDDIT_CLIENT_SECRET=<the "secret" field>
-
-Runs hourly as launchd agent ai.tener.reddit (one sweep per run, then exits).
+Runs as launchd agent ai.tener.reddit (one sweep per run, then exits).
     python3 reddit_monitor.py            # one sweep
     python3 reddit_monitor.py --dry-run  # score but write no drafts/files
 """
@@ -33,7 +32,9 @@ import attention
 BASE = Path(__file__).parent
 STATE_FILE = BASE / "reddit_state.json"
 LEADS_FILE = BASE / "reddit_leads.md"
+QUEUE_FILE = BASE / "reddit_queue.json"
 UA = "macos:tener.monitor:v1.0 (read-only research tool)"
+ACTOR = "trudax/reddit-scraper-lite"
 
 SUBREDDITS = [
     # hiring world — Tener's home turf
@@ -44,7 +45,7 @@ SUBREDDITS = [
     "artificial", "ArtificialInteligence", "AI_Agents",
 ]
 MAX_THREAD_AGE_H = 24
-PER_SUB = 40
+PER_SUB = 12            # posts pulled per subreddit per sweep
 HAIKU_CAP = 12          # Claude calls per sweep
 RELEVANT_AT = 7         # score threshold for a draft
 MODEL = "claude-haiku-4-5"
@@ -69,6 +70,7 @@ score = how much Nick specifically can add (10 = question he's uniquely placed t
 answer; 0 = off-topic, meme, rant with no question, or politics).
 If score >= 7 write a draft comment in Nick's voice: direct, concrete, from practice,
 2-6 sentences, English. Plain sentences, no emoji, no em dashes, no bullet lists.
+Never complain or write from a victim position — observations and insights, not grievances.
 Mention Tener only when the thread explicitly asks for tools like it; otherwise don't.
 Never write anything that pretends to be a random bystander ad."""
 
@@ -105,6 +107,42 @@ def _save_state(state: dict):
     os.replace(tmp, STATE_FILE)
 
 
+def _fetch_apify() -> list[dict]:
+    """Primary source: Apify crawl of each subreddit's /new/."""
+    from apify_client import ApifyClient
+    client = ApifyClient(_env("APIFY_API_TOKEN"))
+    run = client.actor(ACTOR).call(run_input={
+        "startUrls": [{"url": f"https://www.reddit.com/r/{s}/new/"}
+                      for s in SUBREDDITS],
+        "skipComments": True,
+        "maxItems": PER_SUB * len(SUBREDDITS),
+    }, timeout_secs=1500)
+    posts = []
+    for it in client.dataset(run["defaultDatasetId"]).iterate_items():
+        if it.get("dataType") != "post":
+            continue
+        created = 0.0
+        try:
+            created = datetime.fromisoformat(
+                (it.get("createdAt") or "").replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            pass
+        posts.append({
+            "id": it.get("id") or it.get("url", ""),
+            "sub": it.get("parsedCommunityName")
+                   or (it.get("communityName") or "").lstrip("r/"),
+            "title": it.get("title", ""),
+            "text": (it.get("body") or "")[:2500],
+            "url": it.get("url", ""),
+            "ups": 0, "comments": 0,   # lite actor doesn't expose counts
+            "created": created,
+            "stickied": False,
+        })
+    return posts
+
+
+# --- fallback: official OAuth API (used when REDDIT_* keys are in .env) ---
+
 def _token(cid: str, secret: str) -> str:
     req = urllib.request.Request(
         "https://www.reddit.com/api/v1/access_token",
@@ -117,49 +155,49 @@ def _token(cid: str, secret: str) -> str:
         return json.loads(r.read())["access_token"]
 
 
-def _fetch_sub(token: str, sub: str) -> list[dict]:
-    req = urllib.request.Request(
-        f"https://oauth.reddit.com/r/{sub}/new?limit={PER_SUB}&raw_json=1",
-        headers={"User-Agent": UA, "Authorization": f"Bearer {token}"})
-    with urllib.request.urlopen(req, timeout=30) as r:
-        data = json.loads(r.read())
-    out = []
-    for child in data.get("data", {}).get("children", []):
-        d = child.get("data", {})
-        out.append({
-            "id": d.get("name", ""),
-            "sub": sub,
-            "title": d.get("title", ""),
-            "text": (d.get("selftext") or "")[:2500],
-            "url": "https://www.reddit.com" + d.get("permalink", ""),
-            "ups": int(d.get("ups") or 0),
-            "comments": int(d.get("num_comments") or 0),
-            "created": float(d.get("created_utc") or 0),
-            "stickied": bool(d.get("stickied")),
-        })
-    return out
-
-
-def _candidates(token: str, state: dict) -> list[dict]:
-    now = time.time()
-    cands = []
+def _fetch_oauth() -> list[dict]:
+    token = _token(_env("REDDIT_CLIENT_ID"), _env("REDDIT_CLIENT_SECRET"))
+    posts = []
     for sub in SUBREDDITS:
+        req = urllib.request.Request(
+            f"https://oauth.reddit.com/r/{sub}/new?limit={PER_SUB}&raw_json=1",
+            headers={"User-Agent": UA, "Authorization": f"Bearer {token}"})
         try:
-            posts = _fetch_sub(token, sub)
+            with urllib.request.urlopen(req, timeout=30) as r:
+                data = json.loads(r.read())
         except Exception as e:
             print(f"  r/{sub}: fetch failed ({type(e).__name__}: {e})")
             continue
-        for p in posts:
-            if not p["id"] or p["id"] in state["seen"] or p["stickied"]:
-                continue
-            if (now - p["created"]) / 3600 > MAX_THREAD_AGE_H:
-                continue
-            if not TOPIC_RE.search(p["title"] + "\n" + p["text"]):
-                continue
-            cands.append(p)
-        time.sleep(1.2)  # stay well under the API rate limit
-    # busiest threads first — that's where an answer gets read
-    cands.sort(key=lambda p: -(p["ups"] + 2 * p["comments"]))
+        for child in data.get("data", {}).get("children", []):
+            d = child.get("data", {})
+            posts.append({
+                "id": d.get("name", ""),
+                "sub": sub,
+                "title": d.get("title", ""),
+                "text": (d.get("selftext") or "")[:2500],
+                "url": "https://www.reddit.com" + d.get("permalink", ""),
+                "ups": int(d.get("ups") or 0),
+                "comments": int(d.get("num_comments") or 0),
+                "created": float(d.get("created_utc") or 0),
+                "stickied": bool(d.get("stickied")),
+            })
+        time.sleep(1.2)
+    return posts
+
+
+def _candidates(posts: list[dict], state: dict) -> list[dict]:
+    now = time.time()
+    cands = []
+    for p in posts:
+        if not p["id"] or p["id"] in state["seen"] or p["stickied"]:
+            continue
+        if not p["created"] or (now - p["created"]) / 3600 > MAX_THREAD_AGE_H:
+            continue
+        if not TOPIC_RE.search(p["title"] + "\n" + p["text"]):
+            continue
+        cands.append(p)
+    # counts are unreliable across sources — freshest first, haiku decides
+    cands.sort(key=lambda p: -p["created"])
     return cands
 
 
@@ -179,6 +217,27 @@ def _judge(client, p: dict) -> dict:
             "draft": str(v.get("draft") or "").strip()}
 
 
+def _queue_add(hits: list[dict]):
+    q = []
+    if QUEUE_FILE.exists():
+        try:
+            q = json.loads(QUEUE_FILE.read_text())
+        except ValueError:
+            q = []
+    known = {it.get("id") for it in q}
+    for p in hits:
+        if p["id"] in known:
+            continue
+        q.append({"id": p["id"], "sub": p["sub"], "title": p["title"],
+                  "url": p["url"], "why": p["why"], "draft": p["draft"],
+                  "status": "new", "added": time.time()})
+    cut = time.time() - 7 * 86400   # a week-old thread is not worth answering
+    q = [it for it in q if it.get("added", 0) >= cut]
+    tmp = QUEUE_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(q, indent=1))
+    os.replace(tmp, QUEUE_FILE)
+
+
 def _write_leads(hits: list[dict]):
     stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
     block = [f"\n## Свежее — {stamp}\n"]
@@ -187,7 +246,7 @@ def _write_leads(hits: list[dict]):
         block.append(
             f"### r/{p['sub']}: {p['title']}\n"
             f"{p['url']}\n"
-            f"- {p['ups']} up, {p['comments']} комментов, {age_h:.0f}ч назад — {p['why']}\n\n"
+            f"- {age_h:.0f}ч назад — {p['why']}\n\n"
             f"Черновик:\n\n> {p['draft']}\n")
     old = LEADS_FILE.read_text() if LEADS_FILE.exists() else "# Reddit: треды для ответа\n"
     header, _, rest = old.partition("\n")
@@ -195,17 +254,16 @@ def _write_leads(hits: list[dict]):
 
 
 def sweep(dry_run: bool = False) -> int:
-    cid, secret = _env("REDDIT_CLIENT_ID"), _env("REDDIT_CLIENT_SECRET")
-    if not cid or not secret:
-        print("reddit: нет REDDIT_CLIENT_ID/REDDIT_CLIENT_SECRET в .env — "
-              "создай script-app на https://www.reddit.com/prefs/apps")
-        attention.add("Reddit-монитор ждёт ключи: создай app на reddit.com/prefs/apps "
-                      "и добавь REDDIT_CLIENT_ID/SECRET в .env")
-        return 0
-    token = _token(cid, secret)
     state = _load_state()
-    cands = _candidates(token, state)
-    print(f"reddit: кандидатов после префильтра: {len(cands)}")
+    if _env("APIFY_API_TOKEN"):
+        posts = _fetch_apify()
+    elif _env("REDDIT_CLIENT_ID"):
+        posts = _fetch_oauth()
+    else:
+        print("reddit: нет ни APIFY_API_TOKEN, ни REDDIT_CLIENT_ID в .env")
+        return 0
+    cands = _candidates(posts, state)
+    print(f"reddit: собрано {len(posts)}, кандидатов после префильтра: {len(cands)}")
 
     from anthropic import Anthropic
     client = Anthropic(api_key=_env("ANTHROPIC_API_KEY"))
@@ -217,8 +275,7 @@ def sweep(dry_run: bool = False) -> int:
             print(f"  judge failed ({type(e).__name__}: {e})")
             continue
         state["seen"][p["id"]] = time.time()
-        tag = f"{verdict['score']}/10 r/{p['sub']} {p['title'][:60]}"
-        print(f"  {tag} — {verdict['why']}")
+        print(f"  {verdict['score']}/10 r/{p['sub']} {p['title'][:60]} — {verdict['why']}")
         if verdict["score"] >= RELEVANT_AT and verdict["draft"]:
             hits.append({**p, **verdict})
     # everything judged is seen; the rest of the prefilter pool waits for the
@@ -227,7 +284,8 @@ def sweep(dry_run: bool = False) -> int:
         _save_state(state)
         if hits:
             _write_leads(hits)
-            attention.add(f"Reddit: {len(hits)} тред(а) ждут твоего ответа — reddit_leads.md")
+            _queue_add(hits)
+            attention.add(f"Reddit: {len(hits)} тред(а) ждут ответа — команда: reddit_next")
     print(f"reddit: релевантных: {len(hits)}")
     return len(hits)
 
