@@ -47,11 +47,13 @@ SUBREDDITS = [
 ]
 MAX_THREAD_AGE_H = 26
 PER_SUB = 10            # posts pulled per subreddit per sweep
-HAIKU_CAP = 12          # Claude calls per sweep
+HAIKU_CAP = 20          # Claude calls per sweep
 RELEVANT_AT = 7         # score threshold for a draft
 MODEL = "claude-haiku-4-5"
-MIN_UPS = 15            # virality floor: below this the thread has no reach
-MIN_COMMENTS = 10       # ...unless the conversation itself is busy
+# virality floor — applies only when the source gives real counts (OAuth path);
+# the Apify path pulls /top/?t=day, which is already the virality filter
+MIN_UPS = 15
+MIN_COMMENTS = 10
 
 SYSTEM = """You help Nick Nagatkin decide which Reddit threads to answer personally.
 Nick: built an IT staffing company from 5 to 150 people and sold it, recruiter for
@@ -108,19 +110,6 @@ def _save_state(state: dict):
     os.replace(tmp, STATE_FILE)
 
 
-def _counts_from_html(html: str) -> tuple[int, int]:
-    """The lite actor has no count fields, but the page html carries them as
-    shreddit-post attributes."""
-    ups = comments = 0
-    m = re.search(r'\bscore="(\d+)"', html)
-    if m:
-        ups = int(m.group(1))
-    m = re.search(r'\bcomment-count="(\d+)"', html)
-    if m:
-        comments = int(m.group(1))
-    return ups, comments
-
-
 def _fetch_apify() -> list[dict]:
     """Primary source: Apify crawl of each subreddit's top-of-the-day — the
     viral threads, not just the fresh ones."""
@@ -142,7 +131,6 @@ def _fetch_apify() -> list[dict]:
                 (it.get("createdAt") or "").replace("Z", "+00:00")).timestamp()
         except ValueError:
             pass
-        ups, comments = _counts_from_html(it.get("html") or "")
         posts.append({
             "id": it.get("id") or it.get("url", ""),
             "sub": it.get("parsedCommunityName")
@@ -150,7 +138,7 @@ def _fetch_apify() -> list[dict]:
             "title": it.get("title", ""),
             "text": (it.get("body") or "")[:2500],
             "url": it.get("url", ""),
-            "ups": ups, "comments": comments,
+            "ups": None, "comments": None,  # lite actor exposes no counts
             "created": created,
             "stickied": False,
         })
@@ -209,11 +197,14 @@ def _candidates(posts: list[dict], state: dict) -> list[dict]:
             continue
         if not p["created"] or (now - p["created"]) / 3600 > MAX_THREAD_AGE_H:
             continue
-        if p["ups"] < MIN_UPS and p["comments"] < MIN_COMMENTS:
+        if (p["ups"] is not None
+                and p["ups"] < MIN_UPS and p["comments"] < MIN_COMMENTS):
             continue    # no reach — a perfect comment lands in an empty room
         cands.append(p)
-    # most viral first; haiku judges the top of this list
-    cands.sort(key=lambda p: -(p["ups"] + 3 * p["comments"]))
+    # real counts (OAuth) rank by engagement; the Apify top-of-day pool has no
+    # counts, there freshest-first keeps the still-surging threads on top
+    cands.sort(key=lambda p: -(p["ups"] + 3 * p["comments"])
+               if p["ups"] is not None else -p["created"] / 1e9)
     return cands
 
 
@@ -222,7 +213,10 @@ def _judge(client, p: dict) -> dict:
         model=MODEL, max_tokens=500, system=SYSTEM,
         messages=[{"role": "user", "content":
                    f"Subreddit: r/{p['sub']}\nTitle: {p['title']}\n"
-                   f"Upvotes: {p['ups']}, comments: {p['comments']}\n\n{p['text']}"}])
+                   + (f"Upvotes: {p['ups']}, comments: {p['comments']}\n\n"
+                      if p["ups"] is not None else
+                      "From this subreddit's top-of-day listing (high traction).\n\n")
+                   + p["text"]}])
     raw = "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
     m = re.search(r"\{.*\}", raw, re.DOTALL)
     try:
@@ -262,10 +256,12 @@ def _write_leads(hits: list[dict]):
     block = [f"\n## Свежее — {stamp}\n"]
     for p in hits:
         age_h = (time.time() - p["created"]) / 3600
+        counts = (f"{p['ups']} up, {p['comments']} комментов, "
+                  if p["ups"] is not None else "топ дня, ")
         block.append(
             f"### r/{p['sub']}: {p['title']}\n"
             f"{p['url']}\n"
-            f"- {p['ups']} up, {p['comments']} комментов, {age_h:.0f}ч назад — {p['why']}\n\n"
+            f"- {counts}{age_h:.0f}ч назад — {p['why']}\n\n"
             f"Черновик:\n\n> {p['draft']}\n")
     old = LEADS_FILE.read_text() if LEADS_FILE.exists() else "# Reddit: треды для ответа\n"
     header, _, rest = old.partition("\n")
