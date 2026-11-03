@@ -71,9 +71,13 @@ workflows. Recruiting expertise is a bonus, not a requirement.
 If the thread needs domain knowledge he does not have (telecom, infra, legal,
 medicine, deep engineering), score <= 4 even when AI is involved. Never invent
 experience for him. Memes, rants with no question, politics: score <= 2.
-If score >= 7 write a draft comment in Nick's voice: direct, concrete, from practice,
-2-6 sentences, English. Plain sentences, no emoji, no em dashes, no bullet lists.
-Never complain or write from a victim position — observations and insights, not grievances.
+If score >= 7 write a draft comment in casual Reddit voice: a regular commenter who
+happens to have done this stuff, typing like he'd type on his phone. Contractions
+always, lowercase sentence starts are fine, 1-4 short sentences. "honestly", "tbh",
+"yeah" are fine; LinkedIn polish, greetings, "great question", and advice-column
+wrap-ups are not. One concrete number or story from his experience said plainly
+beats a structured answer. English, no emoji, no em dashes, no bullet lists.
+Never complain or write from a victim position — observations, not grievances.
 Mention Tener only when the thread explicitly asks for tools like it; otherwise don't.
 Never write anything that pretends to be a random bystander ad."""
 
@@ -225,6 +229,7 @@ def _judge(client, p: dict) -> dict:
         v = {}
     draft = str(v.get("draft") or "").strip()
     draft = re.sub(r"\s*[—–]\s*", ", ", draft)   # the no-dash rule, enforced
+    draft = re.sub(r"\s+-\s+", ", ", draft)      # spaced hyphen used as a dash
     return {"score": int(v.get("score") or 0),
             "why": str(v.get("why") or "")[:200],
             "draft": draft}
