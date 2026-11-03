@@ -68,6 +68,10 @@ Given a thread, reply with JSON only:
 
 score = how much Nick specifically can add (10 = question he's uniquely placed to
 answer; 0 = off-topic, meme, rant with no question, or politics).
+Nick's expertise is ONLY: recruiting, hiring, sourcing, interviewing, HR tech,
+building a startup, AI applied to hiring. If the thread needs domain knowledge he
+does not have (telecom, infra, legal, medicine, general engineering), score it <= 4
+even when AI is involved. Never invent experience for him.
 If score >= 7 write a draft comment in Nick's voice: direct, concrete, from practice,
 2-6 sentences, English. Plain sentences, no emoji, no em dashes, no bullet lists.
 Never complain or write from a victim position — observations and insights, not grievances.
@@ -212,9 +216,11 @@ def _judge(client, p: dict) -> dict:
         v = json.loads(m.group(0)) if m else {}
     except ValueError:
         v = {}
+    draft = str(v.get("draft") or "").strip()
+    draft = re.sub(r"\s*[—–]\s*", ", ", draft)   # the no-dash rule, enforced
     return {"score": int(v.get("score") or 0),
             "why": str(v.get("why") or "")[:200],
-            "draft": str(v.get("draft") or "").strip()}
+            "draft": draft}
 
 
 def _queue_add(hits: list[dict]):
