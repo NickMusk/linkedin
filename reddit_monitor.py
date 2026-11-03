@@ -37,41 +37,38 @@ UA = "macos:tener.monitor:v1.0 (read-only research tool)"
 ACTOR = "trudax/reddit-scraper-lite"
 
 SUBREDDITS = [
-    # hiring world — Tener's home turf
-    "recruiting", "recruitinghell", "humanresources", "askhr", "jobs",
-    # founders and buyers
+    # startup industry — the main hunting ground (virality first)
     "startups", "Entrepreneur", "SaaS", "smallbusiness", "ycombinator",
+    "indiehackers", "venturecapital", "EntrepreneurRideAlong",
     # AI crowd
-    "artificial", "ArtificialInteligence", "AI_Agents",
+    "artificial", "ArtificialInteligence", "AI_Agents", "OpenAI",
+    # hiring world — Tener's home turf, still worth watching
+    "recruiting", "recruitinghell", "humanresources",
 ]
-MAX_THREAD_AGE_H = 24
-PER_SUB = 12            # posts pulled per subreddit per sweep
+MAX_THREAD_AGE_H = 26
+PER_SUB = 10            # posts pulled per subreddit per sweep
 HAIKU_CAP = 12          # Claude calls per sweep
 RELEVANT_AT = 7         # score threshold for a draft
 MODEL = "claude-haiku-4-5"
-
-# cheap prefilter before Claude sees anything
-TOPIC_RE = re.compile(
-    r"recruit|hiring|hire\b|talent|sourc(?:e|ing)|candidate|\bats\b|applicant"
-    r"|interview|headhunt|resume|cv screen|job (?:post|ad|description)"
-    r"|(?=.*\bai\b|.*agent|.*automat)(?=.*(hir|recruit|hr\b|people ops|staffing))",
-    re.IGNORECASE | re.DOTALL,
-)
+MIN_UPS = 15            # virality floor: below this the thread has no reach
+MIN_COMMENTS = 10       # ...unless the conversation itself is busy
 
 SYSTEM = """You help Nick Nagatkin decide which Reddit threads to answer personally.
-Nick: recruiter for 10+ years, then founder of Tener.ai — an autonomous AI recruiter
-(sources, screens, interviews candidates end to end). He wants to be a useful voice
-in hiring/AI threads, not an advertiser.
+Nick: built an IT staffing company from 5 to 150 people and sold it, recruiter for
+10+ years, now founder of Tener.ai — an autonomous AI recruiter. He wants to be a
+sharp founder voice in big startup/AI threads, not an advertiser.
 
-Given a thread, reply with JSON only:
+Given a thread (its upvote/comment counts are included), reply with JSON only:
 {"score": 0-10, "why": "one short line", "draft": "comment text or empty"}
 
-score = how much Nick specifically can add (10 = question he's uniquely placed to
-answer; 0 = off-topic, meme, rant with no question, or politics).
-Nick's expertise is ONLY: recruiting, hiring, sourcing, interviewing, HR tech,
-building a startup, AI applied to hiring. If the thread needs domain knowledge he
-does not have (telecom, infra, legal, medicine, general engineering), score it <= 4
-even when AI is involved. Never invent experience for him.
+score = reach x what Nick can add. High score needs BOTH: the thread already has
+traction (lots of upvotes/comments) AND Nick can say something concrete from his
+own experience. His ground: starting/scaling/selling a company, fundraising as a
+founder, hiring and teams, agency and SaaS economics, AI tools and agents in real
+workflows. Recruiting expertise is a bonus, not a requirement.
+If the thread needs domain knowledge he does not have (telecom, infra, legal,
+medicine, deep engineering), score <= 4 even when AI is involved. Never invent
+experience for him. Memes, rants with no question, politics: score <= 2.
 If score >= 7 write a draft comment in Nick's voice: direct, concrete, from practice,
 2-6 sentences, English. Plain sentences, no emoji, no em dashes, no bullet lists.
 Never complain or write from a victim position — observations and insights, not grievances.
@@ -111,16 +108,30 @@ def _save_state(state: dict):
     os.replace(tmp, STATE_FILE)
 
 
+def _counts_from_html(html: str) -> tuple[int, int]:
+    """The lite actor has no count fields, but the page html carries them as
+    shreddit-post attributes."""
+    ups = comments = 0
+    m = re.search(r'\bscore="(\d+)"', html)
+    if m:
+        ups = int(m.group(1))
+    m = re.search(r'\bcomment-count="(\d+)"', html)
+    if m:
+        comments = int(m.group(1))
+    return ups, comments
+
+
 def _fetch_apify() -> list[dict]:
-    """Primary source: Apify crawl of each subreddit's /new/."""
+    """Primary source: Apify crawl of each subreddit's top-of-the-day — the
+    viral threads, not just the fresh ones."""
     from apify_client import ApifyClient
     client = ApifyClient(_env("APIFY_API_TOKEN"))
     run = client.actor(ACTOR).call(run_input={
-        "startUrls": [{"url": f"https://www.reddit.com/r/{s}/new/"}
+        "startUrls": [{"url": f"https://www.reddit.com/r/{s}/top/?t=day"}
                       for s in SUBREDDITS],
         "skipComments": True,
         "maxItems": PER_SUB * len(SUBREDDITS),
-    }, timeout_secs=1500)
+    }, timeout_secs=1800)
     posts = []
     for it in client.dataset(run["defaultDatasetId"]).iterate_items():
         if it.get("dataType") != "post":
@@ -131,6 +142,7 @@ def _fetch_apify() -> list[dict]:
                 (it.get("createdAt") or "").replace("Z", "+00:00")).timestamp()
         except ValueError:
             pass
+        ups, comments = _counts_from_html(it.get("html") or "")
         posts.append({
             "id": it.get("id") or it.get("url", ""),
             "sub": it.get("parsedCommunityName")
@@ -138,7 +150,7 @@ def _fetch_apify() -> list[dict]:
             "title": it.get("title", ""),
             "text": (it.get("body") or "")[:2500],
             "url": it.get("url", ""),
-            "ups": 0, "comments": 0,   # lite actor doesn't expose counts
+            "ups": ups, "comments": comments,
             "created": created,
             "stickied": False,
         })
@@ -197,11 +209,11 @@ def _candidates(posts: list[dict], state: dict) -> list[dict]:
             continue
         if not p["created"] or (now - p["created"]) / 3600 > MAX_THREAD_AGE_H:
             continue
-        if not TOPIC_RE.search(p["title"] + "\n" + p["text"]):
-            continue
+        if p["ups"] < MIN_UPS and p["comments"] < MIN_COMMENTS:
+            continue    # no reach — a perfect comment lands in an empty room
         cands.append(p)
-    # counts are unreliable across sources — freshest first, haiku decides
-    cands.sort(key=lambda p: -p["created"])
+    # most viral first; haiku judges the top of this list
+    cands.sort(key=lambda p: -(p["ups"] + 3 * p["comments"]))
     return cands
 
 
@@ -209,7 +221,8 @@ def _judge(client, p: dict) -> dict:
     msg = client.messages.create(
         model=MODEL, max_tokens=500, system=SYSTEM,
         messages=[{"role": "user", "content":
-                   f"Subreddit: r/{p['sub']}\nTitle: {p['title']}\n\n{p['text']}"}])
+                   f"Subreddit: r/{p['sub']}\nTitle: {p['title']}\n"
+                   f"Upvotes: {p['ups']}, comments: {p['comments']}\n\n{p['text']}"}])
     raw = "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
     m = re.search(r"\{.*\}", raw, re.DOTALL)
     try:
@@ -252,7 +265,7 @@ def _write_leads(hits: list[dict]):
         block.append(
             f"### r/{p['sub']}: {p['title']}\n"
             f"{p['url']}\n"
-            f"- {age_h:.0f}ч назад — {p['why']}\n\n"
+            f"- {p['ups']} up, {p['comments']} комментов, {age_h:.0f}ч назад — {p['why']}\n\n"
             f"Черновик:\n\n> {p['draft']}\n")
     old = LEADS_FILE.read_text() if LEADS_FILE.exists() else "# Reddit: треды для ответа\n"
     header, _, rest = old.partition("\n")

@@ -167,7 +167,14 @@ def run_item(item: dict, idx: int, total: int) -> str:
     return "timeout"
 
 
+STAMP_FILE = Path(__file__).parent / "reddit_session_last.txt"
+
+
 def main():
+    try:
+        STAMP_FILE.write_text(time.strftime("%Y-%m-%d"))
+    except OSError:
+        pass
     q = _load()
     fresh = [it for it in q if it.get("status") == "new"]
     if not fresh:

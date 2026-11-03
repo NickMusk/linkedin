@@ -158,6 +158,19 @@ class PosterBar(rumps.App):
         n = self._reddit_pending()
         self.m_rd_next.title = (f"Открыть следующий тред ({n} в очереди)"
                                 if n else "Очередь пуста")
+        # afternoon nudge: queue is waiting but no session ran today
+        # (attention dedupes by message for 12h, so this fires once a day)
+        if n and datetime.now().hour >= 13:
+            try:
+                last = (BASE / "reddit_session_last.txt").read_text().strip()
+            except OSError:
+                last = ""
+            if last != datetime.now().strftime("%Y-%m-%d"):
+                try:
+                    import attention
+                    attention.add("Reddit-сессия сегодня не запускалась, треды ждут: менюбар → Начать сессию ревью")
+                except Exception:
+                    pass
 
     def start_reddit_session(self, _):
         """Guided pass over the queue: tab opens, draft pre-filled, Nick clicks
