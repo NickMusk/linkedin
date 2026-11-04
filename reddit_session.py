@@ -24,6 +24,7 @@ from pathlib import Path
 import gx_browser
 
 QUEUE_FILE = Path(__file__).parent / "reddit_queue.json"
+LOCK_FILE = Path(__file__).parent / "reddit_session.lock"
 PAGE_LOAD_WAIT = 25          # seconds for the thread page to become ready
 FILL_ATTEMPTS = 8            # editor may need a click to expand first
 ITEM_TIMEOUT_MIN = 30        # user walked away — put the item back, stop
@@ -98,17 +99,44 @@ def _load() -> list[dict]:
         return []
 
 
-def _save(q: list[dict]):
+def _save_status(item_id: str, status: str):
+    """Merge ONE status change into the file as it is NOW. The sweep and the
+    menu-bar skip write this file too, so dumping our whole in-memory copy
+    would silently revert anything they changed since we loaded it (that race
+    once wiped a day of fresh threads)."""
+    q = _load()
+    for it in q:
+        if it.get("id") == item_id:
+            it["status"] = status
+            break
     tmp = QUEUE_FILE.with_suffix(".tmp")
     tmp.write_text(json.dumps(q, indent=1))
     os.replace(tmp, QUEUE_FILE)
 
 
-def _wait_ready():
+def _lock() -> bool:
+    """One session at a time: two of them fight over the same tab."""
+    try:
+        pid = int(LOCK_FILE.read_text())
+        os.kill(pid, 0)   # raises if that pid is gone
+        return False
+    except (OSError, ValueError):
+        pass
+    LOCK_FILE.write_text(str(os.getpid()))
+    return True
+
+
+def _wait_ready(url: str):
+    """Ready means OUR page is ready: the reused tab shows the previous
+    thread until navigation commits, and its readyState is already
+    'complete' — filling then grabs the old page's editor."""
+    marker = url.rstrip("/").rsplit("/comments/", 1)[-1].split("/")[0]
     deadline = time.time() + PAGE_LOAD_WAIT
     while time.time() < deadline:
         try:
-            if gx_browser.session_eval("document.readyState") == "complete":
+            state = gx_browser.session_eval(
+                "location.href + ' ' + document.readyState")
+            if marker in state and state.endswith("complete"):
                 return True
         except RuntimeError:
             pass
@@ -134,7 +162,7 @@ def run_item(item: dict, idx: int, total: int) -> str:
     """Returns 'next' | 'skip' | 'stop' | 'timeout'."""
     gx_browser.session_open(item["url"])
     time.sleep(2)
-    _wait_ready()
+    _wait_ready(item["url"])
     # clipboard fallback is always armed, even when auto-fill works
     subprocess.run("pbcopy", input=item["draft"].encode(), check=False)
     fill_state = _fill(item["draft"])
@@ -171,6 +199,9 @@ STAMP_FILE = Path(__file__).parent / "reddit_session_last.txt"
 
 
 def main():
+    if not _lock():
+        print("Сессия уже идёт (reddit_session.lock) — вторая не нужна.")
+        return
     try:
         STAMP_FILE.write_text(time.strftime("%Y-%m-%d"))
     except OSError:
@@ -189,21 +220,19 @@ def main():
     for i, item in enumerate(fresh, 1):
         verdict = run_item(item, i, len(fresh))
         if verdict == "next":
-            item["status"] = "posted"
+            _save_status(item["id"], "posted")
             done += 1
         elif verdict == "skip":
-            item["status"] = "skipped"
+            _save_status(item["id"], "skipped")
             skipped += 1
         else:   # stop / timeout: leave the rest for the next session
             break
-        _save(q)
-    _save(q)
     try:
         gx_browser.session_close()
     except RuntimeError:
         pass
-    print(f"Сессия закончена: пройдено {done}, пропущено {skipped}, "
-          f"осталось {sum(1 for it in q if it.get('status') == 'new')}.")
+    left = sum(1 for it in _load() if it.get("status") == "new")
+    print(f"Сессия закончена: пройдено {done}, пропущено {skipped}, осталось {left}.")
 
 
 if __name__ == "__main__":
