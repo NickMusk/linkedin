@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Reddit monitor: find fresh threads worth answering, draft a reply, notify.
 
-Collection goes through Apify (trudax/reddit-scraper-lite, no Reddit keys
-needed); the official OAuth API stays as a fallback when REDDIT_CLIENT_ID /
-REDDIT_CLIENT_SECRET are in .env.
+Collection goes through Apify (harshmaur/reddit-scraper: real score and
+comment counts, no Reddit keys needed); the official OAuth API stays as a
+fallback when REDDIT_CLIENT_ID / REDDIT_CLIENT_SECRET are in .env.
 
 The script never posts to Reddit — undisclosed bot participation is
 astroturfing, and Reddit shadowbans young automated accounts anyway. It
@@ -34,7 +34,7 @@ STATE_FILE = BASE / "reddit_state.json"
 LEADS_FILE = BASE / "reddit_leads.md"
 QUEUE_FILE = BASE / "reddit_queue.json"
 UA = "macos:tener.monitor:v1.0 (read-only research tool)"
-ACTOR = "trudax/reddit-scraper-lite"
+ACTOR = "harshmaur/reddit-scraper"   # returns real score/comment counts
 
 SUBREDDITS = [
     # startup industry — the main hunting ground (virality first)
@@ -50,8 +50,8 @@ PER_SUB = 10            # posts pulled per subreddit per sweep
 HAIKU_CAP = 20          # Claude calls per sweep
 RELEVANT_AT = 7         # score threshold for a draft
 MODEL = "claude-haiku-4-5"
-# virality floor — applies only when the source gives real counts (OAuth path);
-# the Apify path pulls /top/?t=day, which is already the virality filter
+# virality floor — a thread must clear at least one of these to be worth a
+# comment; both sources now give real counts
 MIN_UPS = 15
 MIN_COMMENTS = 10
 
@@ -71,12 +71,15 @@ workflows. Recruiting expertise is a bonus, not a requirement.
 If the thread needs domain knowledge he does not have (telecom, infra, legal,
 medicine, deep engineering), score <= 4 even when AI is involved. Never invent
 experience for him. Memes, rants with no question, politics: score <= 2.
-If score >= 7 write a draft comment in casual Reddit voice: a regular commenter who
-happens to have done this stuff, typing like he'd type on his phone. Contractions
-always, lowercase sentence starts are fine, 1-4 short sentences. "honestly", "tbh",
-"yeah" are fine; LinkedIn polish, greetings, "great question", and advice-column
-wrap-ups are not. One concrete number or story from his experience said plainly
-beats a structured answer. English, no emoji, no em dashes, no bullet lists.
+If score >= 7 write a draft comment in casual Reddit voice: a guy who's done this
+stuff, typing a quick take on his phone in 30 seconds. ONE thought, not an essay:
+1-3 short sentences, hard max 4. Never a structured answer, never "first/second/
+third", never cover multiple angles — pick the single most useful thing he'd
+actually say and say it like talk. Contractions always, lowercase starts are fine,
+"honestly", "tbh", "yeah", "imo" are fine. Ending on a short question back is fine.
+LinkedIn polish, greetings, "great question", and advice-column wrap-ups are not.
+One concrete number or story said plainly beats any framework.
+English, no emoji, no em dashes, no bullet lists.
 Never complain or write from a victim position — observations, not grievances.
 Mention Tener only when the thread explicitly asks for tools like it; otherwise don't.
 Never write anything that pretends to be a random bystander ad."""
@@ -116,14 +119,13 @@ def _save_state(state: dict):
 
 def _fetch_apify() -> list[dict]:
     """Primary source: Apify crawl of each subreddit's top-of-the-day — the
-    viral threads, not just the fresh ones."""
+    viral threads, not just the fresh ones, with real score/comment counts."""
     from apify_client import ApifyClient
     client = ApifyClient(_env("APIFY_API_TOKEN"))
     run = client.actor(ACTOR).call(run_input={
         "startUrls": [{"url": f"https://www.reddit.com/r/{s}/top/?t=day"}
                       for s in SUBREDDITS],
-        "skipComments": True,
-        "maxItems": PER_SUB * len(SUBREDDITS),
+        "maxPostsCount": PER_SUB,   # per URL
     }, timeout_secs=1800)
     posts = []
     for it in client.dataset(run["defaultDatasetId"]).iterate_items():
@@ -136,15 +138,16 @@ def _fetch_apify() -> list[dict]:
         except ValueError:
             pass
         posts.append({
-            "id": it.get("id") or it.get("url", ""),
+            "id": it.get("id") or it.get("postUrl", ""),
             "sub": it.get("parsedCommunityName")
                    or (it.get("communityName") or "").lstrip("r/"),
             "title": it.get("title", ""),
             "text": (it.get("body") or "")[:2500],
-            "url": it.get("url", ""),
-            "ups": None, "comments": None,  # lite actor exposes no counts
+            "url": it.get("postUrl") or it.get("url", ""),
+            "ups": int(it.get("score") or 0),
+            "comments": int(it.get("commentsCount") or 0),
             "created": created,
-            "stickied": False,
+            "stickied": bool(it.get("stickied") or it.get("pinned")),
         })
     return posts
 
@@ -205,11 +208,25 @@ def _candidates(posts: list[dict], state: dict) -> list[dict]:
                 and p["ups"] < MIN_UPS and p["comments"] < MIN_COMMENTS):
             continue    # no reach — a perfect comment lands in an empty room
         cands.append(p)
-    # real counts (OAuth) rank by engagement; the Apify top-of-day pool has no
-    # counts, there freshest-first keeps the still-surging threads on top
-    cands.sort(key=lambda p: -(p["ups"] + 3 * p["comments"])
-               if p["ups"] is not None else -p["created"] / 1e9)
-    return cands
+    # liveliest first: comments weigh 3x upvotes — a thread people argue in
+    # beats a thread people only upvote. Ranked WITHIN each sub and then
+    # interleaved round-robin: raw counts aren't comparable across subs
+    # (r/OpenAI memes at 5k ups would crowd every r/startups thread out of
+    # the judge budget).
+    def heat(p):
+        return (p["ups"] + 3 * p["comments"]
+                if p["ups"] is not None else p["created"] / 1e9)
+    by_sub: dict[str, list[dict]] = {}
+    for p in cands:
+        by_sub.setdefault(p["sub"], []).append(p)
+    for lst in by_sub.values():
+        lst.sort(key=lambda p: -heat(p))
+    ordered = []
+    while any(by_sub.values()):
+        tier = [lst.pop(0) for lst in by_sub.values() if lst]
+        tier.sort(key=lambda p: -heat(p))
+        ordered.extend(tier)
+    return ordered
 
 
 def _judge(client, p: dict) -> dict:
