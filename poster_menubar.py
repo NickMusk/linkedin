@@ -51,13 +51,14 @@ class PosterBar(rumps.App):
         self.m_dash = rumps.MenuItem("Открыть дашборд", callback=self.open_dash)
         self.m_hdr_tw = rumps.MenuItem("𝕏  TWITTER")
         self.m_hdr_li = rumps.MenuItem("in  LINKEDIN")
+        self.m_li_post = rumps.MenuItem("Пост: черновика нет", callback=self.start_li_post_session)
         self.m_hdr_rd = rumps.MenuItem("◉  REDDIT")
         self.m_rd_session = rumps.MenuItem("▶ Начать сессию ревью", callback=self.start_reddit_session)
         self.m_rd_next = rumps.MenuItem("Очередь пуста", callback=self.open_reddit)
         self.m_rd_skip = rumps.MenuItem("Пропустить следующий", callback=self.skip_reddit)
         self.menu = [self.m_att[0], self.m_att[1], self.m_att[2], self.m_att_clear, None,
                      self.m_hdr_tw, self.m_state, self.m_posted, self.m_queue, self.m_tw_today, None,
-                     self.m_hdr_li, self.m_li_today, None,
+                     self.m_hdr_li, self.m_li_today, self.m_li_post, None,
                      self.m_hdr_rd, self.m_rd_session, self.m_rd_next, self.m_rd_skip, None,
                      self.m_toggle, self.m_dash, None,
                      rumps.MenuItem("Выйти (иконка, не постер)", callback=rumps.quit_application)]
@@ -171,6 +172,52 @@ class PosterBar(rumps.App):
                     attention.add("Reddit-сессия сегодня не запускалась, треды ждут: менюбар → Начать сессию ревью")
                 except Exception:
                     pass
+
+    def _own_posted_today(self) -> bool:
+        """True when Nick's own-posts DB shows a post dated today, or the
+        review session stamped one today."""
+        today = datetime.now().strftime("%Y-%m-%d")
+        try:
+            if (BASE / "linkedin_post_last.txt").read_text().strip() == today:
+                return True
+        except OSError:
+            pass
+        try:
+            d = json.loads((BASE / "own_posts_db.json").read_text())
+            posts = d if isinstance(d, list) else d.get("posts", [])
+            return any((p.get("posted_at") or "").startswith(today) for p in posts)
+        except Exception:
+            return False
+
+    def _li_draft_pending(self) -> bool:
+        try:
+            q = json.loads((BASE / "linkedin_post_queue.json").read_text())
+            return any(it.get("status") == "new" for it in q)
+        except Exception:
+            return False
+
+    @rumps.timer(120)
+    def refresh_li_post(self, _):
+        draft = self._li_draft_pending()
+        self.m_li_post.title = ("▶ Пост: сессия ревью (черновик ждёт)"
+                                if draft else "Пост: черновика нет")
+        # afternoon nudge: no own post today (12h dedupe = once a day)
+        if datetime.now().hour >= 13 and not self._own_posted_today():
+            try:
+                import attention
+                attention.add("Сегодня ещё не постили в LinkedIn"
+                              + (" — черновик готов: менюбар → Пост: сессия ревью"
+                                 if draft else
+                                 " и черновика нет — запусти: python3 linkedin_post.py gen"))
+            except Exception:
+                pass
+
+    def start_li_post_session(self, _):
+        """Guided post review: composer opens pre-filled, Nick clicks Post."""
+        log = open(BASE / "logs" / "linkedin_post_session.log", "a")
+        subprocess.Popen([str(Path.home() / ".tener-menubar-venv/bin/python"),
+                          str(BASE / "linkedin_post_session.py")],
+                         stdout=log, stderr=log, start_new_session=True)
 
     def start_reddit_session(self, _):
         """Guided pass over the queue: tab opens, draft pre-filled, Nick clicks

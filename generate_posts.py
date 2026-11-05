@@ -33,6 +33,10 @@ STYLE RULES:
 - Contrarian is good but must be defensible. Don't be contrarian just to be contrarian.
 - No emoji. No hashtags. No "I'm excited to share".
 - No dashes, hyphens, or em-dashes. Use comma or period instead.
+- No staccato chopped fragments for drama ("Not for a visit. To stay."). Complete natural sentences.
+- NEVER complain or write from a victim position. No "investors won't fund us", no "it's hard to get meetings". Confident observations and insights only.
+- Nothing that reads as resentment toward investors or VCs, even dressed up as a contrarian take ("they fund kids with decks, not operators"). Nick is actively fundraising: a post sneering at who VCs back reads as a rejected founder coping. Takes about VCs are allowed only when Nick is a neutral peer observer, with zero personal stake in the frame.
+- Short outperforms long: personal + contrarian + short is the proven pattern for Nick's account. When in doubt, cut.
 - End without a period on the last line.
 - Length: Format A = 4-6 lines. Format B = 6-10 lines. Format C = 8-12 lines.
 - English only.
@@ -50,7 +54,8 @@ No other text before or after.
 """
 
 
-def generate_post_drafts(trending_topics: list[str], kb_context: str) -> list[str]:
+def generate_post_drafts(trending_topics: list[str], kb_context: str,
+                         idea: str = None) -> list[str]:
     topics_text = "\n".join(f"- {t}" for t in trending_topics)
 
     try:
@@ -79,11 +84,20 @@ def generate_post_drafts(trending_topics: list[str], kb_context: str) -> list[st
         }
     ]
 
-    user_text = (
-        f"Trending topics in Nick's LinkedIn feed right now:\n{topics_text}\n\n"
-        f"Write 3 LinkedIn post drafts for Nick. Draw on his real experience from the knowledge base. "
-        f"Each post should feel like something only he could write, not generic founder content."
-    )
+    if idea:
+        user_text = (
+            f"Nick's own idea for today's post (develop THIS, don't drift to other topics):\n"
+            f"{idea}\n\n"
+            f"Context, what his feed talks about right now:\n{topics_text}\n\n"
+            f"Write 3 LinkedIn post drafts for Nick, each a different take on his idea. "
+            f"Draw on his real experience from the knowledge base."
+        )
+    else:
+        user_text = (
+            f"Trending topics in Nick's LinkedIn feed right now:\n{topics_text}\n\n"
+            f"Write 3 LinkedIn post drafts for Nick. Draw on his real experience from the knowledge base. "
+            f"Each post should feel like something only he could write, not generic founder content."
+        )
     if viral_patterns:
         user_text += (
             "\n\nPrimary signal: use the viral patterns section to choose format and hook — "
